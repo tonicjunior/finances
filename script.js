@@ -993,4 +993,20 @@ function init() {
   }
 }
 
+document.getElementById("btnDeleteAccountMenu").onclick = () => {
+  document.getElementById("deleteAccountModal").classList.add("active");
+};
+
+document.getElementById("btnCancelDeleteAccount").onclick = () => {
+  document.getElementById("deleteAccountModal").classList.remove("active");
+};
+
+document.getElementById("btnConfirmDeleteAccount").onclick = () => {
+  localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(PROFILE_KEY);
+  localStorage.removeItem(THEME_KEY);
+  if (peer) peer.destroy();
+  location.reload();
+};
+
 window.addEventListener("DOMContentLoaded", init);
