@@ -67,10 +67,10 @@ O projeto foi desenvolvido utilizando apenas **HTML, CSS e JavaScript**, sem bac
 ## 📁 Estrutura do Projeto
 
 /
-├── index.html
-├── style.css
-├── script.js
-└── README.md
+├── index.html      # Estrutura da página, modais e importação de bibliotecas
+├── style.css       # Estilos personalizados, temas e animações
+├── script.js       # Lógica de negócio, gráficos, PeerJS e manipulação de dados
+└── README.md       # Documentação do projeto
 
 ---
 
