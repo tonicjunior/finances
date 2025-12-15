@@ -617,6 +617,7 @@ function renderPersonSpecificTab(containerId, personKey, list) {
 }
 
 function renderCharts(list, summary) {
+  // 1. Gráfico de Categorias
   const cats = {};
   list
     .filter((t) => t.type === "expense")
@@ -630,6 +631,7 @@ function renderCharts(list, summary) {
     PALETTE_CATEGORIES
   );
 
+  // 2. Gráfico por Pessoa
   const people = {};
   list
     .filter((t) => t.type === "expense")
@@ -644,26 +646,113 @@ function renderCharts(list, summary) {
     true
   );
 
+  // 3. Gráfico de Barras (Fluxo)
   document.getElementById("incomeExpenseChart").innerHTML =
     generateBarChartHTML(summary.income, summary.expense);
 
+  // --- CÁLCULO DOS INDICADORES E PREVISÃO ---
+
+  // Taxa de Economia Atual
   const savedPct =
     summary.income > 0
       ? ((summary.income - summary.expense) / summary.income) * 100
       : 0;
+
+  // Lógica de Previsão: Soma apenas transações RECORRENTES ativas
+  const recurring = state.transactions.filter((t) => t.isRecurring);
+
+  const calcRecurring = (personKey) => {
+    const pList = recurring.filter(
+      (t) => personKey === "ambos" || t.person === personKey
+    );
+    const inc = pList
+      .filter((t) => t.type === "income")
+      .reduce((s, t) => s + t.amount, 0);
+    const exp = pList
+      .filter((t) => t.type === "expense")
+      .reduce((s, t) => s + t.amount, 0);
+    return { inc, exp, bal: inc - exp };
+  };
+
+  const nextEu = calcRecurring("eu");
+  const nextParceiro = calcRecurring("parceiro");
+
+  // HTML atualizado dos Indicadores
   document.getElementById("fluxoIndicators").innerHTML = `
-    <div class="indicator-box">
-        <div class="indicator-title">Taxa de Economia</div>
-        <div class="indicator-val ${savedPct >= 0 ? "positive" : "negative"}">
-            ${savedPct.toFixed(1)}%
+    <div class="indicator-group">
+        <div class="indicator-box">
+            <div class="indicator-title">Taxa de Economia</div>
+            <div class="indicator-val ${
+              savedPct >= 0 ? "positive" : "negative"
+            }">
+                ${savedPct.toFixed(1)}%
+            </div>
+        </div>
+        <div class="indicator-box">
+            <div class="indicator-title">Resultado Líquido</div>
+            <div class="indicator-val ${
+              summary.balance >= 0 ? "positive" : "negative"
+            }">
+                ${formatCurrency(summary.balance)}
+            </div>
         </div>
     </div>
-    <div class="indicator-box">
-        <div class="indicator-title">Resultado Líquido</div>
-        <div class="indicator-val ${
-          summary.balance >= 0 ? "positive" : "negative"
-        }">
-            ${formatCurrency(summary.balance)}
+
+    <div style="width:100%; text-align:left; font-size:0.8rem; margin-top:1rem; margin-bottom:0.5rem;">
+        <i class="bi bi-calendar-check"></i> Previsão Fixa (Próx. Mês)
+    </div>
+
+    <div class="indicator-group">
+        <div class="indicator-box highlight">
+            <h6>${PERSONS.eu}</h6>
+            <div class="indicator-row">
+                <span>Fixos (+):</span>
+                <span class="indicator-mini-val text-inc">${formatCurrency(
+                  nextEu.inc
+                )}</span>
+            </div>
+            <div class="indicator-row">
+                <span>Fixos (-):</span>
+                <span class="indicator-mini-val text-exp">${formatCurrency(
+                  nextEu.exp
+                )}</span>
+            </div>
+            <hr style="margin: 5px 0; border-color: var(--border)">
+             <div class="indicator-row">
+                <span>Sobra:</span>
+                <span class="indicator-mini-val" style="color: ${
+                  nextEu.bal >= 0 ? "var(--text-primary)" : "var(--danger)"
+                }">
+                    ${formatCurrency(nextEu.bal)}
+                </span>
+            </div>
+        </div>
+
+        <div class="indicator-box highlight">
+            <h6>${PERSONS.parceiro}</h6>
+            <div class="indicator-row">
+                <span>Fixos (+):</span>
+                <span class="indicator-mini-val text-inc">${formatCurrency(
+                  nextParceiro.inc
+                )}</span>
+            </div>
+            <div class="indicator-row">
+                <span>Fixos (-):</span>
+                <span class="indicator-mini-val text-exp">${formatCurrency(
+                  nextParceiro.exp
+                )}</span>
+            </div>
+             <hr style="margin: 5px 0; border-color: var(--border)">
+             <div class="indicator-row">
+                <span>Sobra:</span>
+                <span class="indicator-mini-val" style="color: ${
+                  nextParceiro.bal >= 0
+                    ? "var(--text-primary)"
+                    : "var(--danger)"
+                }">
+                    ${formatCurrency(nextParceiro.bal)}
+                </span>
+            </div>
         </div>
     </div>
   `;
