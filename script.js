@@ -658,11 +658,31 @@ function renderCharts(list, summary) {
       ? ((summary.income - summary.expense) / summary.income) * 100
       : 0;
 
-  // Lógica de Previsão: Soma apenas transações RECORRENTES ativas
-  const recurring = state.transactions.filter((t) => t.isRecurring);
+  // Lógica de Previsão CORRIGIDA:
+  // Filtra recorrentes, mas remove duplicatas (histórico) mantendo apenas o registro mais recente de cada despesa/receita.
+  const uniqueRecurringMap = new Map();
+
+  // Ordena por data (mais recente primeiro) para garantir o valor atualizado
+  const sortedTransactions = [...state.transactions].sort(
+    (a, b) => new Date(b.date) - new Date(a.date)
+  );
+
+  sortedTransactions.forEach((t) => {
+    if (t.isRecurring) {
+      // Chave única: Pessoa + Tipo + Descrição (normalizada)
+      // Isso evita somar "Salário" de Nov e "Salário" de Dez juntos
+      const key = `${t.person}-${t.type}-${t.description.trim().toLowerCase()}`;
+
+      if (!uniqueRecurringMap.has(key)) {
+        uniqueRecurringMap.set(key, t);
+      }
+    }
+  });
+
+  const uniqueRecurringList = Array.from(uniqueRecurringMap.values());
 
   const calcRecurring = (personKey) => {
-    const pList = recurring.filter(
+    const pList = uniqueRecurringList.filter(
       (t) => personKey === "ambos" || t.person === personKey
     );
     const inc = pList
