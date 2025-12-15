@@ -112,8 +112,19 @@
                     class="dropdown-item text-danger"
                     href="#"
                     id="btnClearDataMenu"
-                    ><i class="bi bi-trash me-2"></i>Limpar Tudo</a
                   >
+                    <i class="bi bi-trash me-2"></i>Limpar Transações
+                  </a>
+                </li>
+                <li><hr class="dropdown-divider" /></li>
+                <li>
+                  <a
+                    class="dropdown-item text-danger fw-bold"
+                    href="#"
+                    id="btnDeleteAccountMenu"
+                  >
+                    <i class="bi bi-person-x-fill me-2"></i>Excluir Conta
+                  </a>
                 </li>
               </ul>
             </div>
@@ -322,7 +333,7 @@
         </div>
       </main>
     </div>
-    
+
     <div class="modal-overlay" id="transactionModal">
       <div class="modal-window">
         <div class="modal-header">
@@ -521,33 +532,59 @@
           <button class="btn-close" id="btnCloseImportOptions"></button>
         </div>
         <div class="modal-body">
-            <p class="text-secondary text-center mb-4">
-                De quem são os dados neste arquivo JSON?
-            </p>
-            <div class="d-grid gap-3">
-                <button class="btn btn-outline p-3" id="btnImportAsMe">
-                    <div class="d-flex align-items-center justify-content-center gap-2">
-                        <i class="bi bi-person-fill fs-4"></i>
-                        <div class="text-start">
-                            <div class="fw-bold">Meu Backup</div>
-                            <div class="small">Manter "Eu" como Eu</div>
-                        </div>
-                    </div>
-                </button>
-                <button class="btn btn-outline p-3" id="btnImportAsPartner">
-                    <div class="d-flex align-items-center justify-content-center gap-2">
-                        <i class="bi bi-people-fill fs-4"></i>
-                        <div class="text-start">
-                            <div class="fw-bold">Do Parceiro</div>
-                            <div class="small">Inverter "Eu" para "Parceiro"</div>
-                        </div>
-                    </div>
-                </button>
-            </div>
+          <p class="text-secondary text-center mb-4">
+            De quem são os dados neste arquivo JSON?
+          </p>
+          <div class="d-grid gap-3">
+            <button class="btn btn-outline p-3" id="btnImportAsMe">
+              <div
+                class="d-flex align-items-center justify-content-center gap-2"
+              >
+                <i class="bi bi-person-fill fs-4"></i>
+                <div class="text-start">
+                  <div class="fw-bold">Meu Backup</div>
+                  <div class="small">Manter "Eu" como Eu</div>
+                </div>
+              </div>
+            </button>
+            <button class="btn btn-outline p-3" id="btnImportAsPartner">
+              <div
+                class="d-flex align-items-center justify-content-center gap-2"
+              >
+                <i class="bi bi-people-fill fs-4"></i>
+                <div class="text-start">
+                  <div class="fw-bold">Do Parceiro</div>
+                  <div class="small">Inverter "Eu" para "Parceiro"</div>
+                </div>
+              </div>
+            </button>
+          </div>
         </div>
       </div>
     </div>
 
+    <div class="modal-overlay" id="deleteAccountModal">
+      <div class="modal-window modal-sm">
+        <div class="confirm-dialog">
+          <div class="confirm-icon danger">
+            <i class="bi bi-person-x-fill"></i>
+          </div>
+          <h3>Excluir Conta?</h3>
+          <p>
+            Isso apagará seu perfil, nome e todos os dados salvos neste
+            navegador. O app voltará ao início.
+          </p>
+          <div class="confirm-actions">
+            <button class="btn btn-secondary" id="btnCancelDeleteAccount">
+              Cancelar
+            </button>
+            <button class="btn btn-destructive" id="btnConfirmDeleteAccount">
+              Sim, Excluir
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
