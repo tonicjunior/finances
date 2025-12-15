@@ -64,6 +64,7 @@ let peer = null;
 let conn = null;
 let myPeerId = null;
 let pendingImportData = null;
+let tempImportAsPartner = false;
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -325,6 +326,8 @@ function importData(event) {
       const data = JSON.parse(e.target.result);
       if (Array.isArray(data)) {
         pendingImportData = data;
+        document.getElementById("importStep1").style.display = "block";
+        document.getElementById("importStep2").style.display = "none";
         document.getElementById("importOptionsModal").classList.add("active");
       } else {
         showToast("Formato inválido", "error");
@@ -337,23 +340,43 @@ function importData(event) {
   reader.readAsText(file);
 }
 
-function confirmImport(asPartner) {
+function selectImportPerson(asPartner) {
+  tempImportAsPartner = asPartner;
+  document.getElementById("importStep1").style.display = "none";
+  document.getElementById("importStep2").style.display = "block";
+}
+
+function executeImport(action) {
   if (!pendingImportData) return;
 
   let finalData = pendingImportData;
-  if (asPartner) {
+  if (tempImportAsPartner) {
     finalData = pendingImportData.map(swapTransactionOwnership);
   }
 
-  state.transactions = finalData;
+  if (action === "replace") {
+    state.transactions = finalData;
+    showToast("Dados substituídos com sucesso!", "success");
+  } else if (action === "merge") {
+    const existingIds = new Set(state.transactions.map((t) => t.id));
+    const newItems = finalData.filter((t) => !existingIds.has(t.id));
+    state.transactions = [...state.transactions, ...newItems];
+    showToast(
+      `${newItems.length} novos itens adicionados.`,
+      newItems.length > 0 ? "success" : "warning"
+    );
+  }
+
   saveData();
   render();
-  if (conn && conn.open)
-    sendData({ type: "full_sync", data: state.transactions });
 
-  showToast("Dados importados com sucesso!", "success");
+  if (conn && conn.open) {
+    sendData({ type: "full_sync", data: state.transactions });
+  }
+
   document.getElementById("importOptionsModal").classList.remove("active");
   pendingImportData = null;
+  tempImportAsPartner = false;
 }
 
 function saveTheme() {
@@ -970,10 +993,18 @@ function init() {
   document.getElementById("btnCloseImportOptions").onclick = () => {
     document.getElementById("importOptionsModal").classList.remove("active");
     pendingImportData = null;
+    tempImportAsPartner = false;
   };
-  document.getElementById("btnImportAsMe").onclick = () => confirmImport(false);
+
+  document.getElementById("btnImportAsMe").onclick = () =>
+    selectImportPerson(false);
   document.getElementById("btnImportAsPartner").onclick = () =>
-    confirmImport(true);
+    selectImportPerson(true);
+
+  document.getElementById("btnActionMerge").onclick = () =>
+    executeImport("merge");
+  document.getElementById("btnActionReplace").onclick = () =>
+    executeImport("replace");
 
   ["filterMonth", "filterYear", "filterCategory", "filterPerson"].forEach(
     (id) => {
