@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="FinançasPro" />
+    <title>FinançasPro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div id="onboardingScreen" class="onboarding-overlay" style="display: none">
+      <div class="onboarding-card">
+        <div class="logo mb-4 justify-content-center">
+          <div class="logo-icon">₣</div>
+          <div class="logo-text"><h1>Finanças Pro</h1></div>
+        </div>
+        <h3>Bem-vindo!</h3>
+        <p class="text-secondary mb-4">Configure seu perfil para começar.</p>
+
+        <div class="mb-3 text-start">
+          <label class="form-label">Seu Nome (Eu)</label>
+          <input
+            type="text"
+            id="setupMyName"
+            class="form-control"
+            placeholder="Ex: Antonio"
+          />
+        </div>
+
+        <div class="mb-4 text-start">
+          <label class="form-label">Nome do Parceiro(a)</label>
+          <input
+            type="text"
+            id="setupPartnerName"
+            class="form-control"
+            placeholder="Ex: Maria"
+          />
+        </div>
+
+        <button class="btn btn-primary w-100" id="btnFinishOnboarding">
+          Começar
+        </button>
+      </div>
+    </div>
+
+    <div id="appContent">
+      <header class="header">
+        <div class="container header-content">
+          <div class="logo">
+            <div class="logo-icon">₣</div>
+            <div class="logo-text">
+              <h1>Finanças Pro</h1>
+            </div>
+            <div
+              id="connectionStatus"
+              class="connection-badge offline"
+              title="Desconectado"
+            >
+              <i class="bi bi-wifi-off"></i>
+            </div>
+          </div>
+          <div class="header-actions">
+            <button class="btn btn-ghost" id="btnToggleFilters" title="Filtros">
+              <i class="bi bi-funnel"></i>
+            </button>
+            <button class="btn btn-ghost" id="btnTheme" title="Tema">
+              <i class="bi bi-moon-stars" id="themeIcon"></i>
+            </button>
+            <div class="dropdown">
+              <button
+                class="btn btn-outline"
+                id="btnMenu"
+                data-bs-toggle="dropdown"
+              >
+                <i class="bi bi-three-dots-vertical"></i>
+              </button>
+              <ul class="dropdown-menu">
+                <li>
+                  <a class="dropdown-item" href="#" id="btnSyncMenu">
+                    <i class="bi bi-people-fill me-2"></i>Sincronizar (Par)
+                  </a>
+                </li>
+                <li><hr class="dropdown-divider" /></li>
+                <li>
+                  <a class="dropdown-item" href="#" id="btnImportMenu"
+                    ><i class="bi bi-upload me-2"></i>Importar JSON</a
+                  >
+                </li>
+                <li>
+                  <a class="dropdown-item" href="#" id="btnExportMenu"
+                    ><i class="bi bi-download me-2"></i>Exportar JSON</a
+                  >
+                </li>
+                <li><hr class="dropdown-divider" /></li>
+                <li>
+                  <a
+                    class="dropdown-item text-danger"
+                    href="#"
+                    id="btnClearDataMenu"
+                    ><i class="bi bi-trash me-2"></i>Limpar Tudo</a
+                  >
+                </li>
+              </ul>
+            </div>
+            <input
+              type="file"
+              id="importFile"
+              accept=".json"
+              style="display: none"
+            />
+          </div>
+        </div>
+      </header>
+
+      <div class="container mt-3">
+        <div class="filter-collapse" id="filterContainer">
+          <div class="filters">
+            <div class="filter-group">
+              <i class="bi bi-calendar-month filter-icon"></i>
+              <select class="select" id="filterMonth"></select>
+            </div>
+            <div class="filter-group">
+              <i class="bi bi-calendar3 filter-icon"></i>
+              <select class="select" id="filterYear"></select>
+            </div>
+            <div class="filter-group">
+              <i class="bi bi-tag filter-icon"></i>
+              <select class="select" id="filterCategory"></select>
+            </div>
+            <div class="filter-group">
+              <i class="bi bi-people filter-icon"></i>
+              <select class="select" id="filterPerson"></select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <nav class="container mt-3">
+        <div class="nav-tabs-custom">
+          <button class="tab-btn active" data-tab="dashboard">
+            <i class="bi bi-grid-1x2"></i> Dashboard
+          </button>
+          <button class="tab-btn" data-tab="management">
+            <i class="bi bi-list-check"></i> Gerência
+          </button>
+        </div>
+      </nav>
+
+      <main class="container">
+        <div id="viewDashboard" class="view-section active">
+          <section class="section">
+            <div class="summary-grid">
+              <div class="summary-card">
+                <div class="summary-header">
+                  <div class="summary-icon income">
+                    <i class="bi bi-arrow-up-right"></i>
+                  </div>
+                  <h3>Receitas</h3>
+                </div>
+                <p class="summary-value income" id="totalIncome">R$ 0,00</p>
+              </div>
+
+              <div class="summary-card">
+                <div class="summary-header">
+                  <div class="summary-icon expense">
+                    <i class="bi bi-arrow-down-left"></i>
+                  </div>
+                  <h3>Despesas</h3>
+                </div>
+                <p class="summary-value expense" id="totalExpense">R$ 0,00</p>
+              </div>
+
+              <div class="summary-card">
+                <div class="summary-header">
+                  <div class="summary-icon balance">
+                    <i class="bi bi-bank"></i>
+                  </div>
+                  <h3>Saldo</h3>
+                </div>
+                <p class="summary-value" id="totalBalance">R$ 0,00</p>
+              </div>
+
+              <div class="summary-card">
+                <div class="summary-header">
+                  <div class="summary-icon average">
+                    <i class="bi bi-graph-up"></i>
+                  </div>
+                  <h3>Média</h3>
+                </div>
+                <p class="summary-value" id="averageExpense">R$ 0,00</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="charts-grid-dashboard">
+              <div class="chart-card big-chart">
+                <div
+                  class="card-header d-flex justify-content-between align-items-center"
+                >
+                  <h3><i class="bi bi-bar-chart"></i> Fluxo Financeiro</h3>
+                  <div class="card-tabs">
+                    <button
+                      class="card-tab-btn active"
+                      data-target="fluxo-barras"
+                    >
+                      Ambos
+                    </button>
+                    <button
+                      class="card-tab-btn"
+                      id="tabBtnEu"
+                      data-target="fluxo-eu"
+                    >
+                      Eu
+                    </button>
+                    <button
+                      class="card-tab-btn"
+                      id="tabBtnParceiro"
+                      data-target="fluxo-parceiro"
+                    >
+                      Parceiro
+                    </button>
+                    <button class="card-tab-btn" data-target="fluxo-info">
+                      Indicadores
+                    </button>
+                  </div>
+                </div>
+                <div class="chart-content">
+                  <div id="fluxo-barras" class="tab-content-inner active">
+                    <div
+                      class="chart-container full-height"
+                      id="incomeExpenseChart"
+                    ></div>
+                  </div>
+                  <div
+                    id="fluxo-info"
+                    class="tab-content-inner"
+                    style="display: none"
+                  >
+                    <div
+                      id="fluxoIndicators"
+                      class="indicators-container"
+                    ></div>
+                  </div>
+                  <div
+                    id="fluxo-eu"
+                    class="tab-content-inner"
+                    style="display: none"
+                  >
+                    <div class="person-detail-container" id="detailEu"></div>
+                  </div>
+                  <div
+                    id="fluxo-parceiro"
+                    class="tab-content-inner"
+                    style="display: none"
+                  >
+                    <div
+                      class="person-detail-container"
+                      id="detailParceiro"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="chart-card">
+                <div class="card-header">
+                  <h3><i class="bi bi-pie-chart"></i> Por Categoria</h3>
+                </div>
+                <div class="chart-content row-layout">
+                  <div
+                    class="chart-container small-pie"
+                    id="categoryChart"
+                  ></div>
+                  <div
+                    class="chart-legend vertical-legend"
+                    id="categoryLegend"
+                  ></div>
+                </div>
+              </div>
+
+              <div class="chart-card">
+                <div class="card-header">
+                  <h3><i class="bi bi-people"></i> Por Pessoa</h3>
+                </div>
+                <div class="chart-content row-layout">
+                  <div class="chart-container small-pie" id="personChart"></div>
+                  <div
+                    class="chart-legend vertical-legend"
+                    id="personLegend"
+                  ></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div id="viewManagement" class="view-section">
+          <div class="transactions-section">
+            <div class="transactions-header">
+              <h3><i class="bi bi-list-ul"></i> Transações</h3>
+              <button class="btn btn-primary" id="btnAddTransaction">
+                <i class="bi bi-plus-lg"></i> Novo registro
+              </button>
+            </div>
+            <div class="transactions-list" id="transactionsList"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+    
+    <div class="modal-overlay" id="transactionModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h2 id="modalTitle">Nova Transação</h2>
+          <button class="btn-close" id="btnCloseModalX"></button>
+        </div>
+        <div class="modal-body">
+          <form id="transactionForm" onsubmit="return false;">
+            <input type="hidden" id="txType" value="expense" />
+            <div class="type-toggle-container mb-4">
+              <div class="type-toggle-bg"></div>
+              <button type="button" id="typeExpense" class="type-btn active">
+                <i class="bi bi-arrow-down-circle me-2"></i> Despesa
+              </button>
+              <button type="button" id="typeIncome" class="type-btn">
+                <i class="bi bi-arrow-up-circle me-2"></i> Receita
+              </button>
+            </div>
+            <div class="mb-3">
+              <label for="txDescription" class="form-label">Descrição</label>
+              <div class="input-group">
+                <span class="input-group-text"
+                  ><i class="bi bi-pencil"></i
+                ></span>
+                <input
+                  type="text"
+                  class="form-control"
+                  id="txDescription"
+                  placeholder="Ex: Mercado"
+                  maxlength="100"
+                />
+              </div>
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-6">
+                <label for="txAmount" class="form-label">Valor (R$)</label>
+                <div class="input-group">
+                  <span class="input-group-text">R$</span>
+                  <input
+                    type="number"
+                    class="form-control"
+                    id="txAmount"
+                    placeholder="0,00"
+                    step="0.01"
+                    min="0.01"
+                  />
+                </div>
+              </div>
+              <div class="col-6">
+                <label for="txDate" class="form-label">Data</label>
+                <input type="date" class="form-control" id="txDate" />
+              </div>
+            </div>
+            <div class="row g-3 mb-3">
+              <div class="col-6">
+                <label for="txCategory" class="form-label">Categoria</label>
+                <div class="input-group">
+                  <span class="input-group-text"
+                    ><i class="bi bi-tag"></i
+                  ></span>
+                  <select class="form-select" id="txCategory"></select>
+                </div>
+              </div>
+              <div class="col-6">
+                <label for="txPerson" class="form-label">Responsável</label>
+                <div class="input-group">
+                  <span class="input-group-text"
+                    ><i class="bi bi-person"></i
+                  ></span>
+                  <select class="form-select" id="txPerson"></select>
+                </div>
+              </div>
+            </div>
+            <div class="form-check form-switch mt-3">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                id="txRecurring"
+              />
+              <label class="form-check-label" for="txRecurring"
+                >Transação fixa (Mensal)</label
+              >
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btnCancelTransaction">
+            Cancelar
+          </button>
+          <button class="btn btn-primary" id="btnSaveTransaction">
+            <i class="bi bi-check-lg"></i> Salvar
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="syncModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h2>Sincronização em Par</h2>
+          <button class="btn-close" id="btnCloseSyncX"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-4 text-center">
+            <p class="text-secondary small mb-2">Seu ID de Conexão</p>
+            <div class="input-group mb-2">
+              <input
+                type="text"
+                id="myPeerIdDisplay"
+                class="form-control text-center fw-bold"
+                readonly
+                value="Conectando..."
+              />
+              <button class="btn btn-outline-secondary" id="btnCopyPeerId">
+                <i class="bi bi-clipboard"></i>
+              </button>
+            </div>
+            <p id="peerStatusMsg" class="small text-warning">
+              Aguardando servidor...
+            </p>
+          </div>
+
+          <hr />
+
+          <div class="mb-3">
+            <label class="form-label">Conectar com Parceiro(a)</label>
+            <div class="input-group">
+              <input
+                type="text"
+                id="remotePeerIdInput"
+                class="form-control"
+                placeholder="Cole o ID do parceiro aqui"
+              />
+              <button class="btn btn-primary" id="btnConnectPeer">
+                Conectar
+              </button>
+            </div>
+          </div>
+
+          <div
+            id="connectedPeerSection"
+            style="display: none"
+            class="alert alert-success mt-3 d-flex justify-content-between align-items-center"
+          >
+            <span><i class="bi bi-check-circle-fill me-2"></i> Conectado!</span>
+            <button class="btn btn-sm btn-success" id="btnForceSync">
+              Enviar Dados Agora
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="confirmModal">
+      <div class="modal-window modal-sm">
+        <div class="confirm-dialog">
+          <div class="confirm-icon warning">
+            <i class="bi bi-exclamation-triangle"></i>
+          </div>
+          <h3>Tem certeza?</h3>
+          <p>Esta ação removerá o registro permanentemente.</p>
+          <div class="confirm-actions">
+            <button class="btn btn-secondary" id="btnCancelDelete">
+              Cancelar
+            </button>
+            <button class="btn btn-destructive" id="btnConfirmDelete">
+              Excluir
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="clearDataModal">
+      <div class="modal-window modal-sm">
+        <div class="confirm-dialog">
+          <div class="confirm-icon danger"><i class="bi bi-trash"></i></div>
+          <h3>Limpar tudo?</h3>
+          <p>Todos os seus dados serão apagados.</p>
+          <div class="confirm-actions">
+            <button class="btn btn-secondary" id="btnCancelClear">
+              Cancelar
+            </button>
+            <button class="btn btn-destructive" id="btnConfirmClear">
+              Apagar Tudo
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="importOptionsModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h2>Origem da Importação</h2>
+          <button class="btn-close" id="btnCloseImportOptions"></button>
+        </div>
+        <div class="modal-body">
+            <p class="text-secondary text-center mb-4">
+                De quem são os dados neste arquivo JSON?
+            </p>
+            <div class="d-grid gap-3">
+                <button class="btn btn-outline p-3" id="btnImportAsMe">
+                    <div class="d-flex align-items-center justify-content-center gap-2">
+                        <i class="bi bi-person-fill fs-4"></i>
+                        <div class="text-start">
+                            <div class="fw-bold">Meu Backup</div>
+                            <div class="small">Manter "Eu" como Eu</div>
+                        </div>
+                    </div>
+                </button>
+                <button class="btn btn-outline p-3" id="btnImportAsPartner">
+                    <div class="d-flex align-items-center justify-content-center gap-2">
+                        <i class="bi bi-people-fill fs-4"></i>
+                        <div class="text-start">
+                            <div class="fw-bold">Do Parceiro</div>
+                            <div class="small">Inverter "Eu" para "Parceiro"</div>
+                        </div>
+                    </div>
+                </button>
+            </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
