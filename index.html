@@ -48,7 +48,7 @@
             type="text"
             id="setupPartnerName"
             class="form-control"
-            placeholder="Ex: Aline"
+            placeholder="Ex: Maria"
           />
         </div>
 
@@ -528,36 +528,75 @@
     <div class="modal-overlay" id="importOptionsModal">
       <div class="modal-window">
         <div class="modal-header">
-          <h2>Origem da Importação</h2>
+          <h2>Importação de Dados</h2>
           <button class="btn-close" id="btnCloseImportOptions"></button>
         </div>
         <div class="modal-body">
-          <p class="text-secondary text-center mb-4">
-            De quem são os dados neste arquivo JSON?
-          </p>
-          <div class="d-grid gap-3">
-            <button class="btn btn-outline p-3" id="btnImportAsMe">
-              <div
-                class="d-flex align-items-center justify-content-center gap-2"
-              >
-                <i class="bi bi-person-fill fs-4"></i>
-                <div class="text-start">
-                  <div class="fw-bold">Meu Backup</div>
-                  <div class="small">Manter "Eu" como Eu</div>
+          <div id="importStep1">
+            <p class="text-secondary text-center mb-4">
+              1. De quem são os dados neste arquivo JSON?
+            </p>
+            <div class="d-grid gap-3">
+              <button class="btn btn-outline p-3" id="btnImportAsMe">
+                <div
+                  class="d-flex align-items-center justify-content-center gap-2"
+                >
+                  <i class="bi bi-person-fill fs-4"></i>
+                  <div class="text-start">
+                    <div class="fw-bold">Meu Backup</div>
+                    <div class="small">Manter "Eu" como Eu</div>
+                  </div>
                 </div>
-              </div>
-            </button>
-            <button class="btn btn-outline p-3" id="btnImportAsPartner">
-              <div
-                class="d-flex align-items-center justify-content-center gap-2"
-              >
-                <i class="bi bi-people-fill fs-4"></i>
-                <div class="text-start">
-                  <div class="fw-bold">Do Parceiro</div>
-                  <div class="small">Inverter "Eu" para "Parceiro"</div>
+              </button>
+              <button class="btn btn-outline p-3" id="btnImportAsPartner">
+                <div
+                  class="d-flex align-items-center justify-content-center gap-2"
+                >
+                  <i class="bi bi-people-fill fs-4"></i>
+                  <div class="text-start">
+                    <div class="fw-bold">Do Parceiro</div>
+                    <div class="small">Inverter "Eu" para "Parceiro"</div>
+                  </div>
                 </div>
-              </div>
-            </button>
+              </button>
+            </div>
+          </div>
+
+          <div id="importStep2" style="display: none">
+            <p class="text-secondary text-center mb-4">
+              2. Como você deseja adicionar esses dados?
+            </p>
+            <div class="d-grid gap-3">
+              <button class="btn btn-outline p-3" id="btnActionMerge">
+                <div
+                  class="d-flex align-items-center justify-content-center gap-2"
+                >
+                  <i class="bi bi-intersect fs-4"></i>
+                  <div class="text-start">
+                    <div class="fw-bold">Mesclar Dados</div>
+                    <div class="small">
+                      Manter meus dados atuais e adicionar os novos
+                    </div>
+                  </div>
+                </div>
+              </button>
+              <button
+                class="btn btn-outline p-3 text-danger"
+                id="btnActionReplace"
+              >
+                <div
+                  class="d-flex align-items-center justify-content-center gap-2"
+                >
+                  <i class="bi bi-arrow-repeat fs-4"></i>
+                  <div class="text-start">
+                    <div class="fw-bold">Substituir Tudo</div>
+                    <div class="small">
+                      Apagar meus dados atuais e usar apenas o arquivo
+                    </div>
+                  </div>
+                </div>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -591,4 +630,3 @@
     <script src="script.js"></script>
   </body>
 </html>
-
