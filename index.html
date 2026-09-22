@@ -97,6 +97,12 @@
                 </li>
                 <li><hr class="dropdown-divider" /></li>
                 <li>
+                  <a class="dropdown-item" href="#" id="btnCategoriesMenu">
+                    <i class="bi bi-tags-fill me-2"></i>Categorias
+                  </a>
+                </li>
+                <li><hr class="dropdown-divider" /></li>
+                <li>
                   <a class="dropdown-item" href="#" id="btnImportMenu"
                     ><i class="bi bi-upload me-2"></i>Importar JSON</a
                   >
@@ -140,22 +146,24 @@
 
       <div class="container mt-3">
         <div class="filter-collapse" id="filterContainer">
-          <div class="filters">
-            <div class="filter-group">
-              <i class="bi bi-calendar-month filter-icon"></i>
-              <select class="select" id="filterMonth"></select>
-            </div>
-            <div class="filter-group">
-              <i class="bi bi-calendar3 filter-icon"></i>
-              <select class="select" id="filterYear"></select>
-            </div>
-            <div class="filter-group">
-              <i class="bi bi-tag filter-icon"></i>
-              <select class="select" id="filterCategory"></select>
-            </div>
-            <div class="filter-group">
-              <i class="bi bi-people filter-icon"></i>
-              <select class="select" id="filterPerson"></select>
+          <div class="filter-collapse-inner">
+            <div class="filters">
+              <div class="filter-group">
+                <i class="bi bi-calendar-month filter-icon"></i>
+                <select class="select" id="filterMonth"></select>
+              </div>
+              <div class="filter-group">
+                <i class="bi bi-calendar3 filter-icon"></i>
+                <select class="select" id="filterYear"></select>
+              </div>
+              <div class="filter-group">
+                <i class="bi bi-tag filter-icon"></i>
+                <select class="select" id="filterCategory"></select>
+              </div>
+              <div class="filter-group">
+                <i class="bi bi-people filter-icon"></i>
+                <select class="select" id="filterPerson"></select>
+              </div>
             </div>
           </div>
         </div>
@@ -165,6 +173,9 @@
         <div class="nav-tabs-custom">
           <button class="tab-btn active" data-tab="dashboard">
             <i class="bi bi-grid-1x2"></i> Dashboard
+          </button>
+          <button class="tab-btn" data-tab="goals">
+            <i class="bi bi-stars"></i> Metas
           </button>
           <button class="tab-btn" data-tab="management">
             <i class="bi bi-list-check"></i> Gerência
@@ -176,26 +187,6 @@
         <div id="viewDashboard" class="view-section active">
           <section class="section">
             <div class="summary-grid">
-              <div class="summary-card">
-                <div class="summary-header">
-                  <div class="summary-icon income">
-                    <i class="bi bi-arrow-up-right"></i>
-                  </div>
-                  <h3>Receitas</h3>
-                </div>
-                <p class="summary-value income" id="totalIncome">R$ 0,00</p>
-              </div>
-
-              <div class="summary-card">
-                <div class="summary-header">
-                  <div class="summary-icon expense">
-                    <i class="bi bi-arrow-down-left"></i>
-                  </div>
-                  <h3>Despesas</h3>
-                </div>
-                <p class="summary-value expense" id="totalExpense">R$ 0,00</p>
-              </div>
-
               <div class="summary-card">
                 <div class="summary-header">
                   <div class="summary-icon balance">
@@ -214,6 +205,16 @@
                   <h3>Média</h3>
                 </div>
                 <p class="summary-value" id="averageExpense">R$ 0,00</p>
+              </div>
+
+              <div class="summary-card">
+                <div class="summary-header">
+                  <div class="summary-icon savings">
+                    <i class="bi bi-piggy-bank"></i>
+                  </div>
+                  <h3>Taxa de Poupança</h3>
+                </div>
+                <p class="summary-value" id="savingsRate">0%</p>
               </div>
             </div>
           </section>
@@ -316,6 +317,147 @@
                   ></div>
                 </div>
               </div>
+
+              <div class="chart-card">
+                <div class="card-header">
+                  <h3><i class="bi bi-lightbulb"></i> Insights</h3>
+                </div>
+                <div class="chart-content">
+                  <div class="insights-list" id="insightsList"></div>
+                </div>
+              </div>
+
+              <div class="chart-card">
+                <div class="card-header">
+                  <h3><i class="bi bi-heart-pulse"></i> Saúde Financeira</h3>
+                </div>
+                <div class="chart-content">
+                  <div class="health-bar-wrap" id="healthBars"></div>
+                </div>
+              </div>
+
+              <div class="chart-card big-chart">
+                <div
+                  class="card-header d-flex justify-content-between align-items-center"
+                >
+                  <h3><i class="bi bi-activity"></i> Timeline Financeira</h3>
+                  <select
+                    class="form-select form-select-sm"
+                    id="timelinePeriodSelect"
+                    style="width: auto"
+                  >
+                    <option value="3">Últimos 3 meses</option>
+                    <option value="6" selected>Últimos 6 meses</option>
+                    <option value="12">Último ano</option>
+                  </select>
+                </div>
+                <div class="chart-content">
+                  <div class="timeline-legend">
+                    <span
+                      ><span
+                        class="legend-color"
+                        style="background: var(--success)"
+                      ></span
+                      >Receitas</span
+                    >
+                    <span
+                      ><span
+                        class="legend-color"
+                        style="background: var(--danger)"
+                      ></span
+                      >Despesas</span
+                    >
+                  </div>
+                  <div style="overflow-x: auto">
+                    <canvas
+                      id="timelineChart"
+                      height="160"
+                      style="min-width: 500px; width: 100%"
+                    ></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div id="viewGoals" class="view-section">
+          <section class="section">
+            <div class="summary-grid">
+              <div class="summary-card">
+                <div class="summary-header">
+                  <div class="summary-icon balance">
+                    <i class="bi bi-flag"></i>
+                  </div>
+                  <h3>Metas Ativas</h3>
+                </div>
+                <p class="summary-value" id="goalsActiveCount">0</p>
+              </div>
+
+              <div class="summary-card">
+                <div class="summary-header">
+                  <div class="summary-icon income">
+                    <i class="bi bi-piggy-bank"></i>
+                  </div>
+                  <h3>Total Guardado</h3>
+                </div>
+                <p class="summary-value income" id="goalsSavedTotal">R$ 0,00</p>
+              </div>
+
+              <div class="summary-card">
+                <div class="summary-header">
+                  <div class="summary-icon average">
+                    <i class="bi bi-hourglass-split"></i>
+                  </div>
+                  <h3>Falta Guardar</h3>
+                </div>
+                <p class="summary-value" id="goalsRemainingTotal">R$ 0,00</p>
+              </div>
+
+              <div class="summary-card">
+                <div class="summary-header">
+                  <div class="summary-icon savings">
+                    <i class="bi bi-trophy"></i>
+                  </div>
+                  <h3>Concluídas</h3>
+                </div>
+                <p class="summary-value" id="goalsCompletedCount">0</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="goals-card">
+              <div class="goals-card-header">
+                <div>
+                  <h3><i class="bi bi-stars"></i> Metas Financeiras</h3>
+                  <p class="goals-card-sub">
+                    Defina objetivos e acompanhe sua evolução até a
+                    estabilidade financeira.
+                  </p>
+                </div>
+              </div>
+              <div class="goals-grid" id="goalsSection"></div>
+            </div>
+          </section>
+
+          <section class="section">
+            <div class="achievements-card">
+              <div class="achievements-card-header">
+                <h3><i class="bi bi-trophy"></i> Conquistas</h3>
+                <span class="achievements-summary" id="achievementsSummary"
+                  >0 de 0 conquistas desbloqueadas</span
+                >
+              </div>
+              <div class="achievements-list" id="achievementsList"></div>
+              <div class="achievements-card-footer">
+                <button
+                  type="button"
+                  class="btn btn-outline btn-sm"
+                  id="btnToggleAchievements"
+                  style="display: none"
+                ></button>
+              </div>
             </div>
           </section>
         </div>
@@ -339,6 +481,10 @@
         </div>
       </footer>
     </div>
+
+    <button class="fab" id="btnFabAdd" title="Nova Transação">
+      <i class="bi bi-plus-lg"></i>
+    </button>
 
     <div class="modal-overlay" id="transactionModal">
       <div class="modal-window">
@@ -395,13 +541,29 @@
             </div>
             <div class="row g-3 mb-3">
               <div class="col-6">
-                <label for="txCategory" class="form-label">Categoria</label>
-                <div class="input-group">
-                  <span class="input-group-text"
-                    ><i class="bi bi-tag"></i
-                  ></span>
-                  <select class="form-select" id="txCategory"></select>
+                <label class="form-label">Categoria</label>
+                <div class="category-picker" id="categoryPickerTx">
+                  <button
+                    type="button"
+                    class="category-picker-trigger"
+                    id="categoryPickerTrigger"
+                  >
+                    <span
+                      class="category-picker-dot"
+                      id="categoryPickerDot"
+                    ></span>
+                    <i class="bi bi-tag" id="categoryPickerIcon"></i>
+                    <span id="categoryPickerLabel">Selecione</span>
+                    <i
+                      class="bi bi-chevron-down category-picker-caret"
+                    ></i>
+                  </button>
+                  <div
+                    class="category-picker-panel"
+                    id="categoryPickerPanel"
+                  ></div>
                 </div>
+                <select id="txCategory" style="display: none"></select>
               </div>
               <div class="col-6">
                 <label for="txPerson" class="form-label">Responsável</label>
@@ -464,6 +626,14 @@
 
           <hr />
 
+          <button
+            class="btn btn-outline w-100 mb-3"
+            id="btnFindPartners"
+            disabled
+          >
+            <i class="bi bi-search"></i> Procurar Parceiros Online
+          </button>
+
           <div class="mb-3">
             <label class="form-label">Conectar com Parceiro(a)</label>
             <div class="input-group">
@@ -488,6 +658,314 @@
             <button class="btn btn-sm btn-success" id="btnForceSync">
               Enviar Dados Agora
             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="userListModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h2>Parceiros Online</h2>
+          <div class="d-flex align-items-center gap-2">
+            <button
+              class="btn-icon-sm"
+              id="btnRefreshUserList"
+              title="Atualizar lista"
+            >
+              <i class="bi bi-arrow-clockwise" id="refreshUserListIcon"></i>
+            </button>
+            <button class="btn-close" id="btnCloseUserList"></button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <p class="text-secondary small mb-3">
+            Pessoas disponíveis para sincronizar agora. Selecione alguém para
+            enviar um convite de conexão.
+          </p>
+          <div id="userListLoading" class="user-list-loading">
+            <div class="loading-spinner"></div>
+            <p>Procurando parceiros...</p>
+          </div>
+          <div class="user-list" id="userList"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="connectionRequestModal">
+      <div class="modal-window modal-sm">
+        <div class="confirm-dialog">
+          <div class="confirm-icon primary">
+            <i class="bi bi-people-fill"></i>
+          </div>
+          <h3>Convite de Sincronização</h3>
+          <p id="connectionRequestText">
+            Alguém quer sincronizar as finanças com você.
+          </p>
+          <div class="confirm-actions">
+            <button class="btn btn-secondary" id="btnRejectConnection">
+              Recusar
+            </button>
+            <button class="btn btn-primary" id="btnAcceptConnection">
+              Aceitar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="categoryModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h2>Categorias</h2>
+          <button class="btn-close" id="btnCloseCategoryModal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="category-manage-list" id="categoryManageList"></div>
+
+          <hr class="my-4" />
+
+          <p class="text-secondary small mb-2">Nova categoria</p>
+          <div class="mb-3">
+            <label for="newCategoryName" class="form-label">Nome</label>
+            <input
+              type="text"
+              id="newCategoryName"
+              class="form-control"
+              placeholder="Ex: Academia"
+              maxlength="30"
+            />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Ícone</label>
+            <div class="icon-grid" id="iconGrid"></div>
+          </div>
+          <div class="mb-4 d-flex align-items-center gap-2">
+            <label for="newCategoryColor" class="form-label mb-0">Cor</label>
+            <input
+              type="color"
+              id="newCategoryColor"
+              value="#6366f1"
+              class="color-input"
+            />
+          </div>
+          <button class="btn btn-primary w-100" id="btnAddCategory">
+            <i class="bi bi-plus-lg"></i> Adicionar Categoria
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="goalEditModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h2 id="goalEditModalTitle">Nova Meta</h2>
+          <button class="btn-close" id="btnCloseGoalEditModal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="goalName" class="form-label">Nome da Meta</label>
+            <input
+              type="text"
+              class="form-control"
+              id="goalName"
+              placeholder="Ex: Viagem para a praia"
+              maxlength="40"
+            />
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Ícone</label>
+            <div class="icon-grid" id="goalIconGrid"></div>
+          </div>
+          <div class="mb-3 d-flex align-items-center gap-2">
+            <label for="goalColor" class="form-label mb-0">Cor</label>
+            <input
+              type="color"
+              id="goalColor"
+              value="#6366f1"
+              class="color-input"
+            />
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-6">
+              <label for="goalTarget" class="form-label">Valor Alvo (R$)</label>
+              <input
+                type="number"
+                class="form-control"
+                id="goalTarget"
+                placeholder="0,00"
+                step="0.01"
+                min="0"
+              />
+            </div>
+            <div class="col-6">
+              <label for="goalMonthly" class="form-label"
+                >Contribuição Mensal</label
+              >
+              <input
+                type="number"
+                class="form-control"
+                id="goalMonthly"
+                placeholder="0,00"
+                step="0.01"
+                min="0"
+              />
+            </div>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-6">
+              <label for="goalPerson" class="form-label">Responsável</label>
+              <select class="form-select" id="goalPerson"></select>
+            </div>
+            <div class="col-6" id="goalInitialValueRow">
+              <label for="goalInitialValue" class="form-label"
+                >Valor já guardado</label
+              >
+              <input
+                type="number"
+                class="form-control"
+                id="goalInitialValue"
+                placeholder="0,00"
+                step="0.01"
+                min="0"
+              />
+            </div>
+          </div>
+          <p class="goal-edit-hint">
+            <i class="bi bi-info-circle"></i> Os depósitos nesta meta viram
+            despesas na categoria Investimentos, e as retiradas viram receitas.
+          </p>
+        </div>
+        <div class="modal-footer">
+          <button
+            class="btn btn-destructive me-auto"
+            id="btnDeleteGoal"
+            style="display: none"
+          >
+            <i class="bi bi-trash"></i>
+          </button>
+          <button class="btn btn-secondary" id="btnCancelGoalEdit">
+            Cancelar
+          </button>
+          <button class="btn btn-primary" id="btnSaveGoalEdit">
+            <i class="bi bi-check-lg"></i> Salvar
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="goalDetailModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <div class="goal-detail-title">
+            <span class="goal-detail-icon" id="goalDetailIcon"
+              ><i class="bi bi-star"></i
+            ></span>
+            <h2 id="goalDetailName">Meta</h2>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <button
+              class="btn-icon-sm"
+              id="btnEditGoal"
+              title="Editar meta"
+            >
+              <i class="bi bi-pencil"></i>
+            </button>
+            <button class="btn-close" id="btnCloseGoalDetail"></button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <div class="goal-detail-progress">
+            <div class="goal-detail-ring">
+              <svg viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="42" class="ring-track" />
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="42"
+                  class="ring-fill"
+                  id="goalDetailRingFill"
+                  transform="rotate(-90 50 50)"
+                />
+              </svg>
+              <div class="goal-detail-ring-label" id="goalDetailPct">0%</div>
+            </div>
+            <div class="goal-detail-amounts">
+              <div>
+                <span>Guardado</span>
+                <strong id="goalDetailSaved">R$ 0,00</strong>
+              </div>
+              <div>
+                <span>Meta</span>
+                <strong id="goalDetailTarget">R$ 0,00</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="goal-monthly-row" id="goalMonthlyRow" style="display: none">
+            <div>
+              <i class="bi bi-calendar-check"></i>
+              Contribuição mensal:
+              <strong id="goalMonthlyAmount">R$ 0</strong>
+            </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-primary"
+              id="btnContributeMonthly"
+            >
+              Contribuir agora
+            </button>
+          </div>
+
+          <div class="goal-add-value-form">
+            <p class="goal-section-label">
+              Registrar movimentação
+              <span class="goal-person-hint" id="goalDetailPersonHint"></span>
+            </p>
+            <div class="type-toggle-container mb-2" id="goalValueTypeToggle">
+              <div class="type-toggle-bg"></div>
+              <button type="button" id="goalTypeDeposit" class="type-btn active">
+                <i class="bi bi-plus-circle me-1"></i>Depositar
+              </button>
+              <button type="button" id="goalTypeWithdraw" class="type-btn">
+                <i class="bi bi-dash-circle me-1"></i>Retirar
+              </button>
+            </div>
+            <div class="row g-2">
+              <div class="col-12 col-sm-4">
+                <input
+                  type="number"
+                  class="form-control"
+                  id="goalValueAmount"
+                  placeholder="Valor (R$)"
+                  step="0.01"
+                  min="0.01"
+                />
+              </div>
+              <div class="col-12 col-sm-6">
+                <input
+                  type="text"
+                  class="form-control"
+                  id="goalValueNote"
+                  placeholder="Nota (opcional)"
+                  maxlength="40"
+                />
+              </div>
+              <div class="col-12 col-sm-2">
+                <button
+                  type="button"
+                  class="btn btn-primary w-100"
+                  id="btnAddGoalValue"
+                >
+                  <i class="bi bi-check-lg"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="goal-history">
+            <p class="goal-section-label">Histórico</p>
+            <div class="goal-history-list" id="goalHistoryList"></div>
           </div>
         </div>
       </div>
@@ -630,6 +1108,13 @@
         </div>
       </div>
     </div>
+    <div class="theme-loader" id="themeLoader">
+      <div class="theme-loader-box">
+        <div class="loading-spinner"></div>
+        <span id="themeLoaderText">Aplicando tema...</span>
+      </div>
+    </div>
+
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
