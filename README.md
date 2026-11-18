@@ -13,13 +13,14 @@ O projeto foi desenvolvido utilizando apenas **HTML, CSS e JavaScript**, sem bac
   - Fluxo financeiro mensal
   - Indicadores de economia e resultado líquido
 
-- 👥 **Controle por pessoa**
+- 👥 **Gestão familiar (até 5 integrantes)**
 
-  - Separação de gastos por “Eu” e “Parceiro(a)”
-  - Visualização individual e comparativa
-  - Aba detalhada por pessoa
+  - Cadastro de 1 a 5 integrantes já no primeiro acesso
+  - Adicionar, renomear e remover integrantes na aba Gerência
+  - Todo lançamento é atribuído a um integrante; a visão "Geral" soma todos (a divisão de quem paga quanto fica a critério da família)
+  - Aba detalhada e previsão de gastos fixos por integrante
 
-- 🏷️ **Categorias personalizadas**
+- 🏷️ **Categorias personalizadas** (gerenciadas na aba Gerência)
 
   - Alimentação, Moradia, Lazer, Transporte, Saúde, Educação, Compras e Outros
   - Gráficos por categoria
@@ -27,6 +28,8 @@ O projeto foi desenvolvido utilizando apenas **HTML, CSS e JavaScript**, sem bac
 - 🔁 **Transações recorrentes**
 
   - Marcação de gastos fixos mensais
+  - Fixos aparecem como "previstos" nos meses seguintes e são lançados com um clique ("Lançar" / "Lançar todos")
+  - Card "Próximos meses" com o saldo previsto de cada mês (estilo fatura)
 
 - 🔍 **Filtros avançados**
 
@@ -37,18 +40,24 @@ O projeto foi desenvolvido utilizando apenas **HTML, CSS e JavaScript**, sem bac
   - Escolha manual pelo usuário
   - Detecção automática do tema do sistema
 
-- 🔄 **Sincronização em par (P2P)**
+- 🔄 **Sincronização entre integrantes (P2P)**
 
   - Sincronização direta entre dois navegadores usando **PeerJS**
   - Compartilhamento de dados sem servidor
+  - Conectar **não envia dados**: cada lado escolhe "Enviar meus dados" e o outro aceita ou cancela
+  - Na hora de aceitar, o app mostra "Quem é quem?" para associar integrantes com nomes diferentes em cada aparelho
+  - Antes de mesclar, é salvo um **backup automático** (menu ⋮ → Backup automático), que pode ser restaurado
+  - Depois do primeiro aceite, lançamentos, metas, categorias e novos integrantes sincronizam **em tempo real**
+  - O PeerJS só é carregado ao abrir "Sincronizar integrantes"
 
 - 📦 **Importação e exportação**
 
-  - Exportar dados em JSON
-  - Importar dados de backup
+  - Exportar backup cifrado (JSON criptografado com o **PIN do arquivo**: o PIN em uso no dia da exportação; trocar o PIN depois não altera backups já gerados)
+  - Importar backups cifrados ou backups antigos em JSON aberto
+  - `exemplo-apresentacao.json`: backup cifrado de demonstração (Antonio e Maria, PIN **1234**). Agosto/2026 tem despesas extras (saldo negativo) para demonstrar o filtro. Importe pelo menu ⋮ → Importar backup: a tela "Quem é quem?" mostra os integrantes do arquivo e permite associar, criar ou marcar "Não importar"
 
-- 💾 **Persistência local**
-  - Dados salvos automaticamente no `localStorage`
+- 💾 **Persistência local criptografada**
+  - Dados salvos automaticamente no `localStorage`, criptografados com o PIN do usuário
 
 ---
 
@@ -69,6 +78,7 @@ O projeto foi desenvolvido utilizando apenas **HTML, CSS e JavaScript**, sem bac
  ```
 ├── index.html      # Estrutura da página, modais e importação de bibliotecas
 ├── style.css       # Estilos personalizados, temas e animações
+├── security.js     # Criptografia (cofre local, PIN e backups cifrados)
 ├── script.js       # Lógica de negócio, gráficos, PeerJS e manipulação de dados
 └── README.md       # Documentação do projeto
  ```
@@ -83,8 +93,19 @@ O projeto foi desenvolvido utilizando apenas **HTML, CSS e JavaScript**, sem bac
 
 ## 🔐 Privacidade
 
-Nenhum dado é enviado para servidores.  
+Nenhum dado financeiro é enviado para servidores.
 Todas as informações permanecem localmente no navegador ou sincronizadas via P2P.
+
+- Os dados ficam em um cofre criptografado com **AES-GCM 256** no `localStorage`.
+- A chave é derivada do **PIN** do usuário com **PBKDF2-SHA256 (600.000 iterações)**.
+- O PIN nunca é salvo; os dados abertos existem apenas em memória enquanto o app está desbloqueado.
+- Os backups exportados também são criptografados e exigem o PIN usado na exportação.
+- O PIN tem no mínimo 4 caracteres. PINs simples (ex.: 1234) são permitidos, mas o medidor indica a segurança como **Baixa**. Os campos de PIN têm botão para mostrar/ocultar o que foi digitado.
+- O PIN pode ser alterado (menu ⋮ → Alterar PIN) informando o PIN atual.
+- A sincronização entre integrantes é **criptografada ponta a ponta**: cada aparelho tem um par de chaves ECDH P-256 (a privada fica no cofre cifrado). A chave de sessão AES-GCM é derivada dos dois lados, sem combinar senha. O recomendado é enviar o ID de conexão diretamente ao integrante; a busca de integrantes online (lobby) é opcional.
+- No primeiro acesso é exigido o aceite dos **Termos de uso e Política de privacidade** (menu ⋮ → Termos e privacidade).
+- ⚠️ **Se o PIN for perdido ou esquecido, não há como recuperar os dados.**
+- Na busca de integrantes online, apenas o seu nome e um ID temporário de conexão são enviados ao serviço de lobby.
 
 ---
 
@@ -93,7 +114,7 @@ Todas as informações permanecem localmente no navegador ou sincronizadas via P
 - Versão PWA
 - Metas financeiras
 - Histórico mensal
-- Criptografia na sincronização
+- Sincronização com mais de dois dispositivos ao mesmo tempo
 
 ---
 

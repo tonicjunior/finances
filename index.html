@@ -19,7 +19,6 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
       rel="stylesheet"
     />
-    <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -30,31 +29,160 @@
           <div class="logo-text"><h1>Finanças Pro</h1></div>
         </div>
         <h3>Bem-vindo!</h3>
-        <p class="text-secondary mb-4">Configure seu perfil para começar.</p>
+        <p class="text-secondary mb-4">Configure sua família para começar.</p>
 
         <div class="mb-3 text-start">
-          <label class="form-label">Seu Nome (Eu)</label>
+          <label class="form-label" for="setupMyName">Seu nome</label>
           <input
             type="text"
             id="setupMyName"
             class="form-control"
             placeholder="Ex: Antonio"
+            maxlength="30"
           />
         </div>
 
-        <div class="mb-4 text-start">
-          <label class="form-label">Nome do Parceiro(a)</label>
-          <input
-            type="text"
-            id="setupPartnerName"
-            class="form-control"
-            placeholder="Ex: Maria"
-          />
+        <div class="mb-3 text-start">
+          <label class="form-label" for="setupMemberCount"
+            >Quantas pessoas participam da gestão financeira?</label
+          >
+          <select class="form-select" id="setupMemberCount">
+            <option value="1">1 integrante (só eu)</option>
+            <option value="2" selected>2 integrantes</option>
+            <option value="3">3 integrantes</option>
+            <option value="4">4 integrantes</option>
+            <option value="5">5 integrantes</option>
+          </select>
         </div>
+
+        <div id="setupMembersFields" class="text-start"></div>
+
+        <div class="text-start" id="setupPinSection">
+          <hr class="my-4" />
+          <p class="setup-section-title">
+            <i class="bi bi-shield-lock"></i> Proteja seus dados
+          </p>
+          <div class="mb-3">
+            <label class="form-label" for="setupPin">Crie um PIN</label>
+            <input
+              type="password"
+              id="setupPin"
+              class="form-control"
+              data-strength
+              placeholder="Mínimo de 4 caracteres"
+              autocomplete="new-password"
+              maxlength="64"
+            />
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="setupPinConfirm"
+              >Confirme o PIN</label
+            >
+            <input
+              type="password"
+              id="setupPinConfirm"
+              class="form-control"
+              autocomplete="new-password"
+              maxlength="64"
+            />
+          </div>
+          <div class="pin-warning mb-3">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <span
+              ><strong>Guarde bem o seu PIN.</strong> Ele é usado para
+              criptografar seus dados neste navegador e nos backups. Se você
+              perder ou esquecer o PIN, <strong>não será possível recuperar os
+              dados</strong>.</span
+            >
+          </div>
+        </div>
+
+        <div class="form-check terms-check text-start mt-3">
+          <input class="form-check-input" type="checkbox" id="setupAcceptTerms" />
+          <label class="form-check-label" for="setupAcceptTerms">
+            Li e aceito os
+            <a href="#" data-open-terms>Termos de uso e a Política de privacidade</a>.
+          </label>
+        </div>
+        <p class="pin-error text-start" id="setupError"></p>
 
         <button class="btn btn-primary w-100" id="btnFinishOnboarding">
           Começar
         </button>
+      </div>
+    </div>
+
+    <div id="lockScreen" class="onboarding-overlay" style="display: none">
+      <div class="onboarding-card">
+        <div class="logo mb-4 justify-content-center">
+          <div class="logo-icon">₣</div>
+          <div class="logo-text"><h1>Finanças Pro</h1></div>
+        </div>
+        <div class="lock-icon"><i class="bi bi-shield-lock-fill"></i></div>
+        <h3 id="lockTitle">Dados protegidos</h3>
+        <p class="text-secondary mb-4" id="lockText">
+          Digite seu PIN para desbloquear.
+        </p>
+
+        <form id="lockForm" class="text-start" autocomplete="off">
+          <div class="mb-3">
+            <label class="form-label" for="lockPin" id="lockPinLabel"
+              >PIN</label
+            >
+            <input
+              type="password"
+              id="lockPin"
+              class="form-control"
+              data-strength
+              autocomplete="current-password"
+              maxlength="64"
+            />
+          </div>
+          <div class="mb-3" id="lockPinConfirmRow" style="display: none">
+            <label class="form-label" for="lockPinConfirm"
+              >Confirme o PIN</label
+            >
+            <input
+              type="password"
+              id="lockPinConfirm"
+              class="form-control"
+              autocomplete="new-password"
+              maxlength="64"
+            />
+          </div>
+          <div class="pin-warning mb-3" id="lockWarning" style="display: none">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <span
+              ><strong>Guarde bem o seu PIN.</strong> Se você perder ou
+              esquecer o PIN, <strong>não será possível recuperar os
+              dados</strong>.</span
+            >
+          </div>
+          <p class="pin-error" id="lockError"></p>
+          <button type="submit" class="btn btn-primary w-100" id="btnUnlock">
+            Desbloquear
+          </button>
+        </form>
+
+        <button type="button" class="btn-link-subtle mt-3" id="btnForgotPin">
+          Esqueci meu PIN
+        </button>
+        <div id="forgotPinPanel" class="forgot-pin-panel" style="display: none">
+          <p>
+            Por segurança, o PIN não pode ser recuperado. A única opção é
+            <strong>apagar todos os dados deste navegador</strong> e começar do
+            zero. Se você tiver um backup, poderá importá-lo depois (será
+            necessário o PIN usado na exportação).
+          </p>
+          <div class="confirm-actions">
+            <button type="button" class="btn btn-secondary" id="btnCancelForgotPin">
+              Voltar
+            </button>
+            <button type="button" class="btn btn-destructive" id="btnConfirmWipe">
+              Apagar tudo
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -92,24 +220,41 @@
               <ul class="dropdown-menu">
                 <li>
                   <a class="dropdown-item" href="#" id="btnSyncMenu">
-                    <i class="bi bi-people-fill me-2"></i>Sincronizar (Par)
-                  </a>
-                </li>
-                <li><hr class="dropdown-divider" /></li>
-                <li>
-                  <a class="dropdown-item" href="#" id="btnCategoriesMenu">
-                    <i class="bi bi-tags-fill me-2"></i>Categorias
+                    <i class="bi bi-people-fill me-2"></i>Sincronizar integrantes
                   </a>
                 </li>
                 <li><hr class="dropdown-divider" /></li>
                 <li>
                   <a class="dropdown-item" href="#" id="btnImportMenu"
-                    ><i class="bi bi-upload me-2"></i>Importar JSON</a
+                    ><i class="bi bi-upload me-2"></i>Importar backup</a
+                  >
+                </li>
+                <li>
+                  <a class="dropdown-item" href="#" id="btnAutoBackupMenu"
+                    ><i class="bi bi-clock-history me-2"></i>Backup automático</a
                   >
                 </li>
                 <li>
                   <a class="dropdown-item" href="#" id="btnExportMenu"
-                    ><i class="bi bi-download me-2"></i>Exportar JSON</a
+                    ><i class="bi bi-download me-2"></i>Exportar backup
+                    (cifrado)</a
+                  >
+                </li>
+                <li><hr class="dropdown-divider" /></li>
+                <li>
+                  <a class="dropdown-item" href="#" id="btnChangePinMenu"
+                    ><i class="bi bi-key-fill me-2"></i>Alterar PIN</a
+                  >
+                </li>
+                <li>
+                  <a class="dropdown-item" href="#" id="btnLockMenu"
+                    ><i class="bi bi-lock-fill me-2"></i>Bloquear agora</a
+                  >
+                </li>
+                <li>
+                  <a class="dropdown-item" href="#" id="btnTermsMenu"
+                    ><i class="bi bi-file-earmark-text me-2"></i>Termos e
+                    privacidade</a
                   >
                 </li>
                 <li><hr class="dropdown-divider" /></li>
@@ -150,20 +295,29 @@
             <div class="filters">
               <div class="filter-group">
                 <i class="bi bi-calendar-month filter-icon"></i>
-                <select class="select" id="filterMonth"></select>
+                <select class="select" id="filterMonth" aria-label="Mês"></select>
               </div>
               <div class="filter-group">
                 <i class="bi bi-calendar3 filter-icon"></i>
-                <select class="select" id="filterYear"></select>
+                <select class="select" id="filterYear" aria-label="Ano"></select>
               </div>
               <div class="filter-group">
                 <i class="bi bi-tag filter-icon"></i>
-                <select class="select" id="filterCategory"></select>
+                <select class="select" id="filterCategory" aria-label="Categoria"></select>
               </div>
               <div class="filter-group">
                 <i class="bi bi-people filter-icon"></i>
-                <select class="select" id="filterPerson"></select>
+                <select class="select" id="filterPerson" aria-label="Integrante"></select>
               </div>
+              <button
+                type="button"
+                class="btn btn-outline filter-clear"
+                id="btnClearFilters"
+                title="Voltar ao mês atual, todas as categorias e todos os integrantes"
+                disabled
+              >
+                <i class="bi bi-x-circle"></i> Limpar filtros
+              </button>
             </div>
           </div>
         </div>
@@ -226,31 +380,7 @@
                   class="card-header d-flex justify-content-between align-items-center"
                 >
                   <h3><i class="bi bi-bar-chart"></i> Fluxo Financeiro</h3>
-                  <div class="card-tabs">
-                    <button
-                      class="card-tab-btn active"
-                      data-target="fluxo-barras"
-                    >
-                      Ambos
-                    </button>
-                    <button
-                      class="card-tab-btn"
-                      id="tabBtnEu"
-                      data-target="fluxo-eu"
-                    >
-                      Eu
-                    </button>
-                    <button
-                      class="card-tab-btn"
-                      id="tabBtnParceiro"
-                      data-target="fluxo-parceiro"
-                    >
-                      Parceiro
-                    </button>
-                    <button class="card-tab-btn" data-target="fluxo-info">
-                      Indicadores
-                    </button>
-                  </div>
+                  <div class="card-tabs" id="flowTabs"></div>
                 </div>
                 <div class="chart-content">
                   <div id="fluxo-barras" class="tab-content-inner active">
@@ -269,23 +399,7 @@
                       class="indicators-container"
                     ></div>
                   </div>
-                  <div
-                    id="fluxo-eu"
-                    class="tab-content-inner"
-                    style="display: none"
-                  >
-                    <div class="person-detail-container" id="detailEu"></div>
-                  </div>
-                  <div
-                    id="fluxo-parceiro"
-                    class="tab-content-inner"
-                    style="display: none"
-                  >
-                    <div
-                      class="person-detail-container"
-                      id="detailParceiro"
-                    ></div>
-                  </div>
+                  <div id="flowPersonPanels"></div>
                 </div>
               </div>
 
@@ -340,15 +454,41 @@
                 <div
                   class="card-header d-flex justify-content-between align-items-center"
                 >
+                  <h3><i class="bi bi-calendar3"></i> Próximos meses</h3>
+                  <select
+                    class="form-select form-select-sm card-header-select"
+                    id="forecastPeriodSelect"
+                    aria-label="Período da previsão"
+                  >
+                    <option value="3">3 meses</option>
+                    <option value="6" selected>6 meses</option>
+                    <option value="12">12 meses</option>
+                  </select>
+                </div>
+                <div class="chart-content">
+                  <p class="forecast-hint">
+                    Lançamentos já registrados com data futura + transações fixas
+                    previstas. Itens "Previstos" só entram nos totais reais depois
+                    que você clicar em <strong>Lançar</strong> na lista de transações.
+                  </p>
+                  <div class="forecast-chips" id="forecastChips" role="tablist"></div>
+                  <div id="forecastDetail"></div>
+                </div>
+              </div>
+
+              <div class="chart-card big-chart">
+                <div
+                  class="card-header d-flex justify-content-between align-items-center"
+                >
                   <h3><i class="bi bi-activity"></i> Timeline Financeira</h3>
                   <select
                     class="form-select form-select-sm"
-                    id="timelinePeriodSelect"
+                    id="timelinePeriodSelect" aria-label="Período da timeline"
                     style="width: auto"
                   >
-                    <option value="3">Últimos 3 meses</option>
-                    <option value="6" selected>Últimos 6 meses</option>
-                    <option value="12">Último ano</option>
+                    <option value="3">3 meses até o filtro</option>
+                    <option value="6" selected>6 meses até o filtro</option>
+                    <option value="12">12 meses até o filtro</option>
                   </select>
                 </div>
                 <div class="chart-content">
@@ -463,14 +603,96 @@
         </div>
 
         <div id="viewManagement" class="view-section">
-          <div class="transactions-section">
+          <div class="transactions-section members-section collapsible" data-collapsible="members" data-default="collapsed">
             <div class="transactions-header">
-              <h3><i class="bi bi-list-ul"></i> Transações</h3>
+              <button type="button" class="collapse-toggle" aria-controls="membersBody">
+                <i class="bi bi-chevron-down collapse-caret"></i>
+                <h3><i class="bi bi-people"></i> Integrantes da família</h3>
+              </button>
+              <span class="badge-default" id="membersCount">1 de 5</span>
+            </div>
+            <div class="collapsible-body" id="membersBody">
+            <div class="members-list" id="membersList"></div>
+            <div class="members-add">
+              <input
+                type="text"
+                id="newMemberName"
+                class="form-control"
+                placeholder="Nome do novo integrante"
+                maxlength="30"
+              />
+              <button class="btn btn-primary" id="btnAddMember">
+                <i class="bi bi-person-plus"></i> Adicionar
+              </button>
+            </div>
+            <p class="members-hint">
+              <i class="bi bi-info-circle"></i> Até 5 integrantes por família.
+              Para remover alguém, primeiro exclua ou reatribua os lançamentos e
+              metas dessa pessoa.
+            </p>
+            </div>
+          </div>
+
+          <div class="transactions-section categories-section collapsible" data-collapsible="categories" data-default="collapsed">
+            <div class="transactions-header">
+              <button type="button" class="collapse-toggle" aria-controls="categoriesBody">
+                <i class="bi bi-chevron-down collapse-caret"></i>
+                <h3><i class="bi bi-tags"></i> Categorias</h3>
+              </button>
+              <span class="badge-default" id="categoriesCount">0</span>
+            </div>
+            <div class="collapsible-body" id="categoriesBody">
+            <div class="categories-manage-grid">
+              <div>
+                <p class="categories-subtitle">Categorias cadastradas</p>
+                <div class="category-manage-list" id="categoryManageList"></div>
+              </div>
+              <div class="category-new-form">
+                <p class="categories-subtitle">Nova categoria</p>
+                <div class="mb-3">
+                  <label for="newCategoryName" class="form-label">Nome</label>
+                  <input
+                    type="text"
+                    id="newCategoryName"
+                    class="form-control"
+                    placeholder="Ex: Academia"
+                    maxlength="30"
+                  />
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Ícone</label>
+                  <div class="icon-grid" id="iconGrid"></div>
+                </div>
+                <div class="mb-3 d-flex align-items-center gap-2">
+                  <label for="newCategoryColor" class="form-label mb-0">Cor</label>
+                  <input
+                    type="color"
+                    id="newCategoryColor"
+                    value="#6366f1"
+                    class="color-input"
+                  />
+                </div>
+                <button class="btn btn-primary w-100" id="btnAddCategory">
+                  <i class="bi bi-plus-lg"></i> Adicionar categoria
+                </button>
+              </div>
+            </div>
+            </div>
+          </div>
+
+          <div class="transactions-section collapsible" data-collapsible="transactions" data-default="open">
+            <div class="transactions-header">
+              <button type="button" class="collapse-toggle" aria-controls="transactionsBody">
+                <i class="bi bi-chevron-down collapse-caret"></i>
+                <h3><i class="bi bi-list-ul"></i> Transações</h3>
+              </button>
               <button class="btn btn-primary" id="btnAddTransaction">
                 <i class="bi bi-plus-lg"></i> Novo registro
               </button>
             </div>
-            <div class="transactions-list" id="transactionsList"></div>
+            <div class="collapsible-body" id="transactionsBody">
+              <div class="transactions-list" id="transactionsList"></div>
+            </div>
           </div>
         </div>
       </main>
@@ -575,6 +797,7 @@
                 </div>
               </div>
             </div>
+            <p class="field-hint" id="txPersonHint"></p>
             <div class="form-check form-switch mt-3">
               <input
                 class="form-check-input"
@@ -601,7 +824,7 @@
     <div class="modal-overlay" id="syncModal">
       <div class="modal-window">
         <div class="modal-header">
-          <h2>Sincronização em Par</h2>
+          <h2>Sincronizar integrantes</h2>
           <button class="btn-close" id="btnCloseSyncX"></button>
         </div>
         <div class="modal-body">
@@ -624,24 +847,22 @@
             </p>
           </div>
 
+          <p class="sync-tip">
+            <i class="bi bi-send"></i> <strong>Recomendado:</strong> envie este ID
+            diretamente ao integrante (mensagem, e-mail...) e peça para ele colar
+            abaixo. O ID muda a cada vez que o app é aberto.
+          </p>
+
           <hr />
 
-          <button
-            class="btn btn-outline w-100 mb-3"
-            id="btnFindPartners"
-            disabled
-          >
-            <i class="bi bi-search"></i> Procurar Parceiros Online
-          </button>
-
           <div class="mb-3">
-            <label class="form-label">Conectar com Parceiro(a)</label>
+            <label class="form-label" for="remotePeerIdInput">Conectar com um integrante</label>
             <div class="input-group">
               <input
                 type="text"
                 id="remotePeerIdInput"
                 class="form-control"
-                placeholder="Cole o ID do parceiro aqui"
+                placeholder="Cole aqui o ID do integrante"
               />
               <button class="btn btn-primary" id="btnConnectPeer">
                 Conectar
@@ -649,16 +870,129 @@
             </div>
           </div>
 
-          <div
-            id="connectedPeerSection"
-            style="display: none"
-            class="alert alert-success mt-3 d-flex justify-content-between align-items-center"
-          >
-            <span><i class="bi bi-check-circle-fill me-2"></i> Conectado!</span>
-            <button class="btn btn-sm btn-success" id="btnForceSync">
-              Enviar Dados Agora
+          <div id="connectedPeerSection" class="connected-peer" style="display: none">
+            <div class="connected-peer-head">
+              <span
+                ><i class="bi bi-check-circle-fill"></i> Conectado com
+                <strong id="connectedPeerName"></strong
+              ></span>
+              <span class="e2e-badge"
+                ><i class="bi bi-lock-fill"></i> Ponta a ponta</span
+              >
+            </div>
+            <p class="live-status off" id="connectedLiveStatus"></p>
+            <div class="connected-peer-actions">
+              <button type="button" class="btn btn-sm btn-secondary" id="btnDisconnectPeer">
+                <i class="bi bi-x-circle"></i> Desconectar
+              </button>
+              <button type="button" class="btn btn-sm btn-primary" id="btnForceSync">
+                <i class="bi bi-send"></i> Enviar meus dados
+              </button>
+            </div>
+          </div>
+
+          <div class="sync-lobby">
+            <p class="sync-lobby-title">Opcional: procurar quem está online</p>
+            <p class="sync-lobby-text">
+              Mostra seu nome em uma lista pública temporária para facilitar o
+              encontro. Use só se não conseguir enviar o ID diretamente.
+            </p>
+            <button
+              class="btn btn-outline w-100"
+              id="btnFindPartners"
+              disabled
+            >
+              <i class="bi bi-search"></i> Procurar integrantes online
             </button>
           </div>
+
+          <p class="e2e-note">
+            <i class="bi bi-shield-lock"></i> Cada aparelho tem um par de chaves
+            (pública/privada). Os dados sincronizados são cifrados ponta a ponta:
+            não é preciso combinar senha, e nenhum servidor consegue lê-los.
+          </p>
+        </div>
+      </div>
+    </div>
+
+
+    <div class="modal-overlay" id="syncStartModal" data-mode="require">
+      <div class="modal-window modal-sm">
+        <div class="confirm-dialog">
+          <div class="confirm-icon primary"><i class="bi bi-link-45deg"></i></div>
+          <h3>Conectado com <span id="syncStartName"></span></h3>
+          <p>
+            <strong>Nenhum dado foi enviado ainda.</strong> Quer enviar seus
+            lançamentos, metas, categorias e integrantes? A outra pessoa poderá
+            aceitar ou recusar.
+          </p>
+          <p class="field-hint">
+            Depois que um dos lados aceitar, as alterações dos dois passam a ser
+            sincronizadas em tempo real.
+          </p>
+          <div class="confirm-actions">
+            <button type="button" class="btn btn-secondary" id="btnSyncStartLater">Agora não</button>
+            <button type="button" class="btn btn-primary" id="btnSyncStartSend">
+              <i class="bi bi-send"></i> Enviar meus dados
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="dataOfferModal" data-mode="require">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h2 id="dataOfferTitle">Dados recebidos</h2>
+        </div>
+        <div class="modal-body">
+          <p class="field-hint mb-2" id="dataOfferSubtitle"></p>
+          <div class="offer-summary" id="dataOfferSummary"></div>
+          <p class="offer-section-title">Quem é quem?</p>
+          <p class="field-hint mb-2">
+            Os integrantes podem ter nomes diferentes em cada aparelho. Indique a
+            quem corresponde cada pessoa da outra lista:
+          </p>
+          <div class="mapping-list" id="dataOfferMapping"></div>
+          <div class="pin-warning mt-3">
+            <i class="bi bi-shield-check"></i>
+            <span>Ao aceitar, um <strong>backup automático</strong> dos seus dados
+            atuais é salvo neste aparelho (menu ⋮ → Backup automático). Lançamentos
+            com o mesmo ID são atualizados; os demais são somados.</span>
+          </div>
+          <div id="dataOfferModeRow" class="offer-mode" style="display: none">
+            <p class="offer-section-title mt-3">Como importar?</p>
+            <label class="offer-mode-option">
+              <input type="radio" name="offerMode" id="offerModeMerge" value="merge" checked />
+              <span><strong>Mesclar</strong> com os dados atuais (recomendado)</span>
+            </label>
+            <label class="offer-mode-option">
+              <input type="radio" name="offerMode" id="offerModeReplace" value="replace" />
+              <span><strong>Substituir</strong> lançamentos e metas pelos do arquivo</span>
+            </label>
+          </div>
+          <p class="pin-error" id="dataOfferError"></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="btnDeclineDataOffer">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="btnAcceptDataOffer">
+            <i class="bi bi-check-lg"></i> Aceitar dados
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="autoBackupModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h2><i class="bi bi-clock-history me-2"></i>Backup automático</h2>
+          <button class="btn-close" id="btnCloseAutoBackup" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body" id="autoBackupInfo"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" id="btnRestoreAutoBackup">
+            <i class="bi bi-arrow-counterclockwise"></i> Restaurar este backup
+          </button>
         </div>
       </div>
     </div>
@@ -666,7 +1000,7 @@
     <div class="modal-overlay" id="userListModal">
       <div class="modal-window">
         <div class="modal-header">
-          <h2>Parceiros Online</h2>
+          <h2>Integrantes online</h2>
           <div class="d-flex align-items-center gap-2">
             <button
               class="btn-icon-sm"
@@ -685,7 +1019,7 @@
           </p>
           <div id="userListLoading" class="user-list-loading">
             <div class="loading-spinner"></div>
-            <p>Procurando parceiros...</p>
+            <p>Procurando integrantes...</p>
           </div>
           <div class="user-list" id="userList"></div>
         </div>
@@ -702,6 +1036,9 @@
           <p id="connectionRequestText">
             Alguém quer sincronizar as finanças com você.
           </p>
+          <p class="field-hint">
+            Aceite apenas se você enviou seu ID para essa pessoa.
+          </p>
           <div class="confirm-actions">
             <button class="btn btn-secondary" id="btnRejectConnection">
               Recusar
@@ -714,47 +1051,6 @@
       </div>
     </div>
 
-    <div class="modal-overlay" id="categoryModal">
-      <div class="modal-window">
-        <div class="modal-header">
-          <h2>Categorias</h2>
-          <button class="btn-close" id="btnCloseCategoryModal"></button>
-        </div>
-        <div class="modal-body">
-          <div class="category-manage-list" id="categoryManageList"></div>
-
-          <hr class="my-4" />
-
-          <p class="text-secondary small mb-2">Nova categoria</p>
-          <div class="mb-3">
-            <label for="newCategoryName" class="form-label">Nome</label>
-            <input
-              type="text"
-              id="newCategoryName"
-              class="form-control"
-              placeholder="Ex: Academia"
-              maxlength="30"
-            />
-          </div>
-          <div class="mb-3">
-            <label class="form-label">Ícone</label>
-            <div class="icon-grid" id="iconGrid"></div>
-          </div>
-          <div class="mb-4 d-flex align-items-center gap-2">
-            <label for="newCategoryColor" class="form-label mb-0">Cor</label>
-            <input
-              type="color"
-              id="newCategoryColor"
-              value="#6366f1"
-              class="color-input"
-            />
-          </div>
-          <button class="btn btn-primary w-100" id="btnAddCategory">
-            <i class="bi bi-plus-lg"></i> Adicionar Categoria
-          </button>
-        </div>
-      </div>
-    </div>
 
     <div class="modal-overlay" id="goalEditModal">
       <div class="modal-window">
@@ -1009,83 +1305,6 @@
       </div>
     </div>
 
-    <div class="modal-overlay" id="importOptionsModal">
-      <div class="modal-window">
-        <div class="modal-header">
-          <h2>Importação de Dados</h2>
-          <button class="btn-close" id="btnCloseImportOptions"></button>
-        </div>
-        <div class="modal-body">
-          <div id="importStep1">
-            <p class="text-secondary text-center mb-4">
-              1. De quem são os dados neste arquivo JSON?
-            </p>
-            <div class="d-grid gap-3">
-              <button class="btn btn-outline p-3" id="btnImportAsMe">
-                <div
-                  class="d-flex align-items-center justify-content-center gap-2"
-                >
-                  <i class="bi bi-person-fill fs-4"></i>
-                  <div class="text-start">
-                    <div class="fw-bold">Meu Backup</div>
-                    <div class="small">Manter "Eu" como Eu</div>
-                  </div>
-                </div>
-              </button>
-              <button class="btn btn-outline p-3" id="btnImportAsPartner">
-                <div
-                  class="d-flex align-items-center justify-content-center gap-2"
-                >
-                  <i class="bi bi-people-fill fs-4"></i>
-                  <div class="text-start">
-                    <div class="fw-bold">Do Parceiro</div>
-                    <div class="small">Inverter "Eu" para "Parceiro"</div>
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
-
-          <div id="importStep2" style="display: none">
-            <p class="text-secondary text-center mb-4">
-              2. Como você deseja adicionar esses dados?
-            </p>
-            <div class="d-grid gap-3">
-              <button class="btn btn-outline p-3" id="btnActionMerge">
-                <div
-                  class="d-flex align-items-center justify-content-center gap-2"
-                >
-                  <i class="bi bi-intersect fs-4"></i>
-                  <div class="text-start">
-                    <div class="fw-bold">Mesclar Dados</div>
-                    <div class="small">
-                      Manter meus dados atuais e adicionar os novos
-                    </div>
-                  </div>
-                </div>
-              </button>
-              <button
-                class="btn btn-outline p-3 text-danger"
-                id="btnActionReplace"
-              >
-                <div
-                  class="d-flex align-items-center justify-content-center gap-2"
-                >
-                  <i class="bi bi-arrow-repeat fs-4"></i>
-                  <div class="text-start">
-                    <div class="fw-bold">Substituir Tudo</div>
-                    <div class="small">
-                      Apagar meus dados atuais e usar apenas o arquivo
-                    </div>
-                  </div>
-                </div>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="modal-overlay" id="deleteAccountModal">
       <div class="modal-window modal-sm">
         <div class="confirm-dialog">
@@ -1094,8 +1313,8 @@
           </div>
           <h3>Excluir Conta?</h3>
           <p>
-            Isso apagará seu perfil, nome e todos os dados salvos neste
-            navegador. O app voltará ao início.
+            Isso apagará seu perfil, os integrantes, o PIN e todos os dados
+            salvos neste navegador. O app voltará ao início.
           </p>
           <div class="confirm-actions">
             <button class="btn btn-secondary" id="btnCancelDeleteAccount">
@@ -1108,6 +1327,275 @@
         </div>
       </div>
     </div>
+    <div class="modal-overlay modal-top" id="termsModal">
+      <div class="modal-window modal-lg">
+        <div class="modal-header">
+          <h2><i class="bi bi-file-earmark-text me-2"></i>Termos de uso e privacidade</h2>
+          <button class="btn-close" id="btnCloseTermsX" aria-label="Fechar"></button>
+        </div>
+        <div class="modal-body terms-content">
+          <p class="terms-updated">Versão 2 · Atualizado em novembro de 2026</p>
+
+          <p class="terms-intro">
+            Estes termos explicam como o Finanças Pro protege suas informações,
+            quais serviços externos ele usa e o que cabe a você para manter seus
+            dados seguros. Leia com atenção antes de começar.
+          </p>
+
+          <h4><i class="bi bi-info-circle"></i> 1. Como a ferramenta funciona</h4>
+          <p>
+            O Finanças Pro é uma ferramenta de organização financeira pessoal e
+            familiar que roda <strong>inteiramente no seu navegador</strong>. Não
+            existe conta, cadastro em servidor nem banco de dados central: seus
+            lançamentos ficam no seu aparelho e só vão para outro aparelho quando
+            você conecta um integrante.
+          </p>
+
+          <h4><i class="bi bi-shield-lock"></i> 2. Políticas de segurança adotadas</h4>
+          <ul>
+            <li>
+              <strong>Criptografia local:</strong> todos os dados financeiros são
+              gravados cifrados (AES-GCM 256 bits). A chave é derivada do seu PIN
+              com PBKDF2-SHA256 (600.000 iterações).
+            </li>
+            <li>
+              <strong>PIN nunca armazenado:</strong> o PIN não é salvo em lugar
+              nenhum. Sem ele, os dados não podem ser lidos — nem pelos
+              desenvolvedores.
+            </li>
+            <li>
+              <strong>Backups cifrados:</strong> o arquivo exportado é protegido
+              pelo <strong>PIN do arquivo</strong>, que é o PIN em uso no momento
+              da exportação. Trocar o PIN do app depois não altera os backups já
+              gerados.
+            </li>
+            <li>
+              <strong>Sincronização ponta a ponta:</strong> cada aparelho tem um
+              par de chaves pública/privada (ECDH P-256). Os dados trafegam
+              diretamente entre os aparelhos, cifrados com uma chave que só eles
+              conhecem. Nenhuma senha precisa ser combinada.
+            </li>
+            <li>
+              <strong>Convite com aceite:</strong> nenhuma conexão acontece sem o
+              aceite explícito de quem recebe o convite.
+            </li>
+            <li>
+              <strong>Sem rastreamento:</strong> não usamos cookies de
+              publicidade, analytics ou qualquer ferramenta de monitoramento.
+            </li>
+            <li>
+              <strong>Minimização:</strong> pedimos apenas o necessário (nomes dos
+              integrantes e lançamentos). Não coletamos CPF, e-mail, telefone,
+              dados bancários ou localização.
+            </li>
+          </ul>
+
+          <h4><i class="bi bi-hdd-network"></i> 3. Serviços externos utilizados</h4>
+          <p>Para conectar integrantes, o app usa duas APIs:</p>
+          <ul>
+            <li>
+              <strong>PeerJS (servidor público de conexão):</strong> gera o
+              <strong>código de conexão</strong> (ID) temporário do seu aparelho e
+              ajuda os dois aparelhos a se encontrarem na internet. Ele recebe o
+              ID e o endereço IP, mas <strong>não recebe nem consegue ler</strong>
+              seus dados financeiros.
+            </li>
+            <li>
+              <strong>API de lobby:</strong> facilita a comunicação por meio desse
+              código. Ao usar "Procurar integrantes online", seu
+              <strong>nome</strong> e seu ID ficam em uma lista pública temporária,
+              para o outro integrante encontrar você sem copiar o código. O uso é
+              opcional e o registro é removido ao conectar, fechar a busca ou a
+              aba. A forma mais segura é enviar o ID diretamente ao integrante.
+            </li>
+          </ul>
+          <p>
+            Fontes e bibliotecas são carregadas de CDNs (Google Fonts, jsDelivr,
+            unpkg), que recebem o seu endereço IP ao abrir a página, conforme as
+            políticas deles. Nenhum dado financeiro é enviado a eles.
+          </p>
+
+          <h4><i class="bi bi-person-check"></i> 4. Deveres e responsabilidades do usuário</h4>
+          <ul>
+            <li>
+              <strong>Guardar o PIN</strong> em local seguro. Se ele for perdido,
+              não há como recuperar os dados.
+            </li>
+            <li>
+              <strong>Escolher um PIN adequado.</strong> PINs curtos ou óbvios
+              (como 1234) são aceitos, mas oferecem proteção baixa.
+            </li>
+            <li>
+              <strong>Fazer backups periódicos</strong> e anotar o PIN de cada
+              arquivo exportado.
+            </li>
+            <li>
+              <strong>Proteger o aparelho:</strong> use bloqueio de tela e clique em
+              "Bloquear agora" ao usar um computador compartilhado.
+            </li>
+            <li>
+              <strong>Compartilhar o código de conexão só com quem você
+              conhece</strong> e aceitar apenas convites que você espera.
+            </li>
+            <li>
+              <strong>Obter a ciência dos integrantes cadastrados.</strong> Ao
+              registrar outras pessoas e seus lançamentos, você declara que elas
+              sabem e concordam.
+            </li>
+            <li>
+              Lembrar que dados sincronizados passam a existir também no aparelho
+              do outro integrante, sob a responsabilidade dele.
+            </li>
+            <li>Usar a ferramenta apenas para fins lícitos e pessoais.</li>
+          </ul>
+
+          <h4><i class="bi bi-exclamation-triangle"></i> 5. Limitações</h4>
+          <ul>
+            <li>
+              É uma ferramenta de organização, não uma consultoria financeira. As
+              previsões são estimativas baseadas nos seus lançamentos.
+            </li>
+            <li>
+              É fornecida "como está", sem garantia de disponibilidade. Os
+              serviços externos (item 3) são gratuitos e podem ficar
+              indisponíveis, o que afeta apenas a conexão entre integrantes.
+            </li>
+            <li>Limpar os dados do navegador apaga as informações deste aparelho.</li>
+          </ul>
+
+          <h4><i class="bi bi-person-lock"></i> 6. Seus direitos (LGPD – Lei 13.709/2018)</h4>
+          <ul>
+            <li><strong>Acesso e portabilidade:</strong> menu ⋮ → Exportar backup.</li>
+            <li><strong>Correção:</strong> edite qualquer lançamento, meta, categoria ou integrante.</li>
+            <li>
+              <strong>Eliminação:</strong> menu ⋮ → Excluir conta apaga tudo deste
+              navegador. Dados já sincronizados precisam ser apagados também no
+              outro aparelho.
+            </li>
+            <li>
+              <strong>Revogação:</strong> você pode deixar de usar a ferramenta e
+              excluir os dados a qualquer momento.
+            </li>
+          </ul>
+
+          <h4><i class="bi bi-arrow-repeat"></i> 7. Alterações destes termos</h4>
+          <p>
+            Quando estes termos mudarem, uma nova versão será exibida e o aceite
+            será pedido novamente.
+          </p>
+
+          <p class="terms-accepted" id="termsAcceptedInfo"></p>
+        </div>
+        <div class="modal-footer" id="termsRequireActions" style="display: none">
+          <button type="button" class="btn btn-secondary" id="btnDeclineTerms">
+            Não aceito
+          </button>
+          <button type="button" class="btn btn-primary" id="btnAcceptTerms">
+            <i class="bi bi-check-lg"></i> Li e aceito
+          </button>
+        </div>
+        <div class="modal-footer" id="termsReadActions">
+          <button type="button" class="btn btn-primary" id="btnCloseTerms" data-dismiss>
+            <i class="bi bi-check-lg"></i> Entendi
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="pinPromptModal">
+      <div class="modal-window modal-sm">
+        <form class="confirm-dialog" id="pinPromptForm" autocomplete="off">
+          <div class="confirm-icon primary">
+            <i class="bi bi-shield-lock"></i>
+          </div>
+          <h3 id="pinPromptTitle">Confirme seu PIN</h3>
+          <p id="pinPromptText"></p>
+          <input
+            type="password"
+            id="pinPromptInput"
+            class="form-control mt-3"
+            aria-label="PIN"
+            placeholder="PIN"
+            maxlength="64"
+          />
+          <p class="pin-error" id="pinPromptError"></p>
+          <div class="confirm-actions">
+            <button type="button" class="btn btn-secondary" id="btnCancelPinPrompt">
+              Cancelar
+            </button>
+            <button type="submit" class="btn btn-primary" id="btnConfirmPinPrompt">
+              Confirmar
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="changePinModal">
+      <div class="modal-window">
+        <div class="modal-header">
+          <h2>Alterar PIN</h2>
+          <button class="btn-close" id="btnCloseChangePin"></button>
+        </div>
+        <form id="changePinForm" autocomplete="off">
+          <div class="modal-body">
+            <div class="mb-3">
+              <label class="form-label" for="currentPin">PIN atual</label>
+              <input
+                type="password"
+                id="currentPin"
+                class="form-control"
+                autocomplete="current-password"
+                maxlength="64"
+              />
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="newPin">Novo PIN</label>
+              <input
+                type="password"
+                id="newPin"
+                class="form-control"
+                data-strength
+                placeholder="Mínimo de 4 caracteres"
+                autocomplete="new-password"
+                maxlength="64"
+              />
+            </div>
+            <div class="mb-3">
+              <label class="form-label" for="newPinConfirm"
+                >Confirme o novo PIN</label
+              >
+              <input
+                type="password"
+                id="newPinConfirm"
+                class="form-control"
+                autocomplete="new-password"
+                maxlength="64"
+              />
+            </div>
+            <div class="pin-warning">
+              <i class="bi bi-exclamation-triangle-fill"></i>
+              <span
+                >Seus dados serão criptografados novamente com o novo PIN. Se
+                você perdê-lo, <strong>não será possível recuperar os
+                dados</strong>. Backups exportados antes da troca continuam
+                exigindo o PIN antigo.</span
+              >
+            </div>
+            <p class="pin-error mt-2" id="changePinError"></p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="btnCancelChangePin">
+              Cancelar
+            </button>
+            <button type="submit" class="btn btn-primary" id="btnSaveChangePin">
+              <i class="bi bi-check-lg"></i> Alterar PIN
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <div class="theme-loader" id="themeLoader">
       <div class="theme-loader-box">
         <div class="loading-spinner"></div>
@@ -1118,6 +1606,7 @@
     <div class="toast-container" id="toastContainer"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="security.js"></script>
     <script src="script.js"></script>
   </body>
 </html>

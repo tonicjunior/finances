@@ -79,10 +79,17 @@ let customCategories = {};
 let CATEGORIES = { ...DEFAULT_CATEGORIES };
 let selectedCategoryIcon = ICON_CHOICES[0];
 
+// Integrantes da família. As chaves são estáveis (os lançamentos guardam a
+// chave, não o nome). "eu" é sempre o dono do dispositivo e "parceiro" é a
+// chave histórica do 2º integrante, mantida para compatibilidade com dados
+// antigos e com a sincronização entre dispositivos.
+const MAX_MEMBERS = 5;
+const MEMBER_SLOTS = ["eu", "parceiro", "membro3", "membro4", "membro5"];
+const SHARED_PERSON_KEY = "ambos";
+const SHARED_PERSON_LABEL = "Compartilhado";
+
 let PERSONS = {
   eu: "Eu",
-  parceiro: "Parceiro(a)",
-  ambos: "Ambos",
 };
 
 const PALETTE_CATEGORIES = [
@@ -94,7 +101,14 @@ const PALETTE_CATEGORIES = [
   "#14b8a6",
   "#3b82f6",
 ];
-const PALETTE_PERSONS = ["#f59e0b", "#ef4444", "#84cc16", "#d946ef", "#f97316"];
+const PALETTE_PERSONS = [
+  "#f59e0b",
+  "#ef4444",
+  "#84cc16",
+  "#d946ef",
+  "#f97316",
+  "#0ea5e9",
+];
 const MONTHS = [
   "Janeiro",
   "Fevereiro",
@@ -301,18 +315,18 @@ const ACHIEVEMENTS = [
     progress: (ctx) => `${Math.min(ctx.recurringCount, 10)}/10`,
   },
 
-  // Uso a dois
+  // Uso em família
   {
     id: "equilibrio_a_dois",
-    label: "Equilíbrio a Dois",
-    description: "Registre transações para você e para o(a) parceiro(a).",
+    label: "Gestão em Família",
+    description: "Registre transações para você e para outro integrante.",
     icon: "bi-people-fill",
-    check: (ctx) => ctx.hasEuTransactions && ctx.hasParceiroTransactions,
+    check: (ctx) => ctx.hasEuTransactions && ctx.hasOtherMemberTransactions,
   },
   {
     id: "sincronizado",
     label: "Sincronizado",
-    description: "Conecte-se com seu parceiro(a) via sincronização em par.",
+    description: "Sincronize os dados com outro integrante da família.",
     icon: "bi-link-45deg",
     check: (ctx) => ctx.hasSynced,
   },
@@ -414,17 +428,13 @@ let state = {
   editingId: null,
   userProfile: {
     name: "",
-    partnerName: "",
+    members: [],
   },
 };
 
 let peer = null;
 let conn = null;
 let myPeerId = null;
-let pendingImportData = null;
-let pendingImportCategories = null;
-let pendingImportGoals = null;
-let tempImportAsPartner = false;
 let editingGoalId = null;
 let selectedGoalIcon = ICON_CHOICES[0];
 let goalDetailId = null;
@@ -437,12 +447,215 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
+// Dados vindos de outros dispositivos, de backups ou do lobby são renderizados
+// via innerHTML; escapar evita injeção de HTML/scripts que poderiam ler os
+// dados já descriptografados em memória.
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Para valores usados dentro de onclick="fn('...')": entidades HTML são
+// decodificadas antes do JS ser interpretado, então só caracteres seguros.
+function safeJsArg(value) {
+  return String(value ?? "").replace(/[^\w-]/g, "");
+}
+
+// ── INTEGRANTES ──
+function getMembers() {
+  const members = state.userProfile.members;
+  return Array.isArray(members) && members.length
+    ? members
+    : [{ key: "eu", name: state.userProfile.name || "Eu" }];
+}
+
+function normalizeProfile(raw) {
+  const profile = raw && typeof raw === "object" ? raw : {};
+  const seen = new Set();
+  let members = (Array.isArray(profile.members) ? profile.members : [])
+    .filter(
+      (m) =>
+        m &&
+        MEMBER_SLOTS.includes(m.key) &&
+        typeof m.name === "string" &&
+        !seen.has(m.key) &&
+        seen.add(m.key)
+    )
+    .map((m) => ({ key: m.key, name: m.name.trim() || "Integrante" }));
+
+  // Perfis antigos tinham apenas { name, partnerName }.
+  if (!members.length) {
+    members = [{ key: "eu", name: profile.name || "Eu" }];
+    if (profile.partnerName) {
+      members.push({ key: "parceiro", name: profile.partnerName });
+    }
+  }
+  if (!members.some((m) => m.key === "eu")) {
+    members.unshift({ key: "eu", name: profile.name || "Eu" });
+  }
+  members = members.slice(0, MAX_MEMBERS);
+
+  return { name: members.find((m) => m.key === "eu").name, members };
+}
+
+// Todo lançamento pertence a UM integrante (não existe mais "Compartilhado"
+// no cadastro). A visão "Geral"/"Todos os integrantes" mostra a soma, e a
+// divisão de quem paga quanto fica a critério da família.
+function rebuildPersons() {
+  const map = {};
+  getMembers().forEach((m) => (map[m.key] = m.name));
+  PERSONS = map;
+}
+
+function getPersonLabel(key) {
+  if (PERSONS[key]) return PERSONS[key];
+  // Lançamentos antigos ainda podem estar como "Compartilhado".
+  if (key === SHARED_PERSON_KEY) return `${SHARED_PERSON_LABEL} (antigo)`;
+  if (key === "parceiro") return "Outro integrante";
+  return "Integrante removido";
+}
+
+function getMemberColor(key) {
+  const idx = MEMBER_SLOTS.indexOf(key);
+  return PALETTE_PERSONS[(idx === -1 ? 5 : idx) % PALETTE_PERSONS.length];
+}
+
+function saveProfile() {
+  secureStorage.setItem(PROFILE_KEY, JSON.stringify(state.userProfile));
+}
+
+function countPersonUsage(key) {
+  return {
+    transactions: state.transactions.filter((t) => t.person === key).length,
+    goals: state.goals.filter((g) => g.person === key).length,
+  };
+}
+
+function refreshAfterMembersChange() {
+  saveProfile();
+  updatePersonLabels();
+  if (state.filters.person !== "all" && !PERSONS[state.filters.person]) {
+    state.filters.person = "all";
+  }
+  setupFilters();
+  renderMembersList();
+  render();
+}
+
+function renderMembersList() {
+  const list = document.getElementById("membersList");
+  if (!list) return;
+  const members = getMembers();
+
+  list.innerHTML = members
+    .map((m) => {
+      const isOwner = m.key === "eu";
+      const initial = escapeHtml(m.name.trim().charAt(0) || "?");
+      return `
+      <div class="member-item">
+        <span class="member-avatar" style="background:${getMemberColor(
+          m.key
+        )}">${initial}</span>
+        <input type="text" class="form-control form-control-sm" maxlength="30"
+          aria-label="Nome do integrante" value="${escapeHtml(m.name)}"
+          onchange="renameMember('${safeJsArg(m.key)}', this.value)" />
+        ${
+          isOwner
+            ? '<span class="badge-default">Você</span>'
+            : `<button class="btn-icon-sm delete" title="Remover integrante" onclick="removeMember('${safeJsArg(
+                m.key
+              )}')"><i class="bi bi-person-dash"></i></button>`
+        }
+      </div>`;
+    })
+    .join("");
+
+  document.getElementById(
+    "membersCount"
+  ).textContent = `${members.length} de ${MAX_MEMBERS}`;
+  const full = members.length >= MAX_MEMBERS;
+  document.getElementById("btnAddMember").disabled = full;
+  document.getElementById("newMemberName").disabled = full;
+}
+
+function addMember() {
+  const input = document.getElementById("newMemberName");
+  const name = input.value.trim();
+  const members = getMembers();
+
+  if (members.length >= MAX_MEMBERS) {
+    showToast(`Limite de ${MAX_MEMBERS} integrantes atingido`, "warning");
+    return;
+  }
+  if (!name) {
+    input.classList.add("error");
+    showToast("Digite o nome do integrante", "error");
+    return;
+  }
+  input.classList.remove("error");
+
+  const usedKeys = new Set(members.map((m) => m.key));
+  const key = MEMBER_SLOTS.find((k) => !usedKeys.has(k));
+  state.userProfile.members = [...members, { key, name }];
+  input.value = "";
+  refreshAfterMembersChange();
+  showToast("Integrante adicionado!", "success");
+}
+
+function renameMember(key, value) {
+  const name = String(value || "").trim();
+  const member = getMembers().find((m) => m.key === key);
+  if (!member) return;
+  if (!name) {
+    showToast("O nome não pode ficar vazio", "error");
+    renderMembersList();
+    return;
+  }
+  state.userProfile.members = getMembers().map((m) =>
+    m.key === key ? { ...m, name } : m
+  );
+  if (key === "eu") state.userProfile.name = name;
+  refreshAfterMembersChange();
+  showToast("Nome atualizado", "success");
+}
+
+function removeMember(key) {
+  if (key === "eu") return;
+  const member = getMembers().find((m) => m.key === key);
+  if (!member) return;
+
+  const usage = countPersonUsage(key);
+  if (usage.transactions > 0 || usage.goals > 0) {
+    const parts = [];
+    if (usage.transactions) parts.push(`${usage.transactions} lançamento(s)`);
+    if (usage.goals) parts.push(`${usage.goals} meta(s)`);
+    showToast(
+      `${member.name} possui ${parts.join(
+        " e "
+      )}. Exclua ou reatribua antes de remover.`,
+      "error"
+    );
+    return;
+  }
+
+  confirmDeleteAction = () => {
+    state.userProfile.members = getMembers().filter((m) => m.key !== key);
+    refreshAfterMembersChange();
+    showToast("Integrante removido");
+  };
+  document.getElementById("confirmModal").classList.add("active");
+}
+
 function rebuildCategories() {
   CATEGORIES = { ...DEFAULT_CATEGORIES, ...customCategories };
 }
 
 function loadCustomCategories() {
-  const stored = localStorage.getItem(CUSTOM_CATEGORIES_KEY);
+  const stored = secureStorage.getItem(CUSTOM_CATEGORIES_KEY);
   if (stored) {
     try {
       customCategories = JSON.parse(stored);
@@ -454,7 +667,7 @@ function loadCustomCategories() {
 }
 
 function saveCustomCategories(broadcast = true) {
-  localStorage.setItem(CUSTOM_CATEGORIES_KEY, JSON.stringify(customCategories));
+  secureStorage.setItem(CUSTOM_CATEGORIES_KEY, JSON.stringify(customCategories));
   rebuildCategories();
   if (broadcast && conn && conn.open) {
     sendData({ type: "categories_sync", data: customCategories });
@@ -496,21 +709,25 @@ function renderCategoryManageList() {
   const container = document.getElementById("categoryManageList");
   if (!container) return;
   const entries = Object.entries(CATEGORIES);
+  const countEl = document.getElementById("categoriesCount");
+  if (countEl) countEl.textContent = `${entries.length} categorias`;
   container.innerHTML = entries
     .map(([key, cat]) => {
       const isCustom = !DEFAULT_CATEGORIES[key];
       return `
       <div class="category-manage-item">
         <div class="category-manage-info">
-          <span class="category-dot" style="background:${
+          <span class="category-dot" style="background:${escapeHtml(
             cat.color || "#6b7280"
-          }"></span>
-          <i class="bi ${cat.icon}"></i>
-          <span>${cat.label}</span>
+          )}"></span>
+          <i class="bi ${escapeHtml(cat.icon)}"></i>
+          <span>${escapeHtml(cat.label)}</span>
         </div>
         ${
           isCustom
-            ? `<button class="btn-icon-sm delete" onclick="deleteCustomCategory('${key}')" title="Remover"><i class="bi bi-trash"></i></button>`
+            ? `<button class="btn-icon-sm delete" onclick="deleteCustomCategory('${safeJsArg(
+                key
+              )}')" title="Remover"><i class="bi bi-trash"></i></button>`
             : `<span class="badge-default">Padrão</span>`
         }
       </div>`;
@@ -518,13 +735,49 @@ function renderCategoryManageList() {
     .join("");
 }
 
-function openCategoryModal() {
-  selectedCategoryIcon = ICON_CHOICES[0];
-  document.getElementById("newCategoryName").value = "";
-  document.getElementById("newCategoryColor").value = "#6366f1";
+// Seções recolhíveis da Gerência. Integrantes e Categorias começam
+// fechadas; Transações aberta. A escolha fica salva só neste navegador.
+const COLLAPSE_KEY = "financas-pro-collapsed";
+
+function readCollapsePrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "{}") || {};
+  } catch (e) {
+    return {}; // preferência inválida: usa o padrão de cada seção
+  }
+}
+
+function setSectionCollapsed(section, collapsed) {
+  section.classList.toggle("is-collapsed", collapsed);
+  const btn = section.querySelector(".collapse-toggle");
+  if (btn) btn.setAttribute("aria-expanded", String(!collapsed));
+}
+
+function setupCollapsibleSections() {
+  const prefs = readCollapsePrefs();
+  document.querySelectorAll("[data-collapsible]").forEach((section) => {
+    const id = section.dataset.collapsible;
+    const collapsed =
+      id in prefs ? !!prefs[id] : section.dataset.default === "collapsed";
+    setSectionCollapsed(section, collapsed);
+    section.querySelector(".collapse-toggle").onclick = () => {
+      const next = !section.classList.contains("is-collapsed");
+      setSectionCollapsed(section, next);
+      const p = readCollapsePrefs();
+      p[id] = next;
+      try {
+        localStorage.setItem(COLLAPSE_KEY, JSON.stringify(p));
+      } catch (e) {
+        /* armazenamento indisponível: a seção só não lembra o estado */
+      }
+    };
+  });
+}
+
+// Seção "Categorias" fica na aba Gerência (antes era um modal no menu).
+function renderCategoriesSection() {
   renderIconGrid();
   renderCategoryManageList();
-  document.getElementById("categoryModal").classList.add("active");
 }
 
 function addCustomCategory() {
@@ -562,7 +815,8 @@ function addCustomCategory() {
 function deleteCustomCategory(key) {
   if (!customCategories[key]) return;
   delete customCategories[key];
-  saveCustomCategories();
+  saveCustomCategories(false);
+  sendData({ type: "category_delete", data: { key } });
   setupFilters();
   renderCategoryManageList();
   render();
@@ -571,7 +825,7 @@ function deleteCustomCategory(key) {
 
 // ── METAS (GOALS) ──
 function loadGoals() {
-  const stored = localStorage.getItem(GOALS_KEY);
+  const stored = secureStorage.getItem(GOALS_KEY);
   if (stored) {
     try {
       state.goals = JSON.parse(stored);
@@ -584,13 +838,13 @@ function loadGoals() {
 }
 
 function saveGoals(broadcast = true) {
-  localStorage.setItem(GOALS_KEY, JSON.stringify(state.goals));
+  secureStorage.setItem(GOALS_KEY, JSON.stringify(state.goals));
   if (broadcast && conn && conn.open) {
     sendData({ type: "goals_sync", data: state.goals });
   }
 }
 
-function mergeGoals(incomingList) {
+function mergeGoals(incomingList, { silent = false } = {}) {
   let changed = false;
   incomingList.forEach((g) => {
     const exists = state.goals.find((local) => local.id === g.id);
@@ -608,7 +862,7 @@ function mergeGoals(incomingList) {
     renderGoals();
     if (goalDetailId) renderGoalDetail();
     renderAchievements();
-    showToast("Metas sincronizadas", "success");
+    if (!silent) showToast("Metas sincronizadas", "success");
   }
 }
 
@@ -645,13 +899,15 @@ function renderGoals() {
       const completed = g.target > 0 && saved >= g.target;
       const circumference = 2 * Math.PI * 30;
       const dash = (pct / 100) * circumference;
-      const color = completed ? cssVar("--success") : g.color || "#6366f1";
+      const color = escapeHtml(
+        completed ? cssVar("--success") : g.color || "#6366f1"
+      );
       const iconHtml = g.icon
-        ? `<i class="bi ${g.icon}"></i>`
-        : `<span class="goal-emoji-text">${g.emoji || "🎯"}</span>`;
+        ? `<i class="bi ${escapeHtml(g.icon)}"></i>`
+        : `<span class="goal-emoji-text">${escapeHtml(g.emoji || "🎯")}</span>`;
 
       return `
-        <div class="goal-card ${completed ? "completed" : ""}" onclick="openGoalDetail('${g.id}')">
+        <div class="goal-card ${completed ? "completed" : ""}" onclick="openGoalDetail('${safeJsArg(g.id)}')">
           <div class="goal-ring">
             <svg viewBox="0 0 68 68">
               <circle cx="34" cy="34" r="30" fill="none" stroke="var(--border)" stroke-width="4" />
@@ -663,7 +919,7 @@ function renderGoals() {
             <span class="goal-emoji" style="color:${color}">${iconHtml}</span>
           </div>
           <span class="goal-pct">${pct}%</span>
-          <h4>${g.name}</h4>
+          <h4>${escapeHtml(g.name)}</h4>
           <div class="goal-progress-track">
             <div class="goal-progress-fill" style="width:${pct}%;background:${color}"></div>
           </div>
@@ -755,7 +1011,8 @@ function openGoalEditModal(id = null) {
   document.getElementById("goalTarget").value = goal?.target || "";
   document.getElementById("goalMonthly").value = goal?.monthlyContribution || "";
   document.getElementById("goalColor").value = goal?.color || "#6366f1";
-  document.getElementById("goalPerson").value = goal?.person || "eu";
+  document.getElementById("goalPerson").value =
+    goal && PERSONS[goal.person] ? goal.person : "eu";
 
   selectedGoalIcon = goal?.icon || ICON_CHOICES[0];
   renderGoalIconGrid();
@@ -844,7 +1101,8 @@ function confirmDeleteGoalFromEdit() {
 
 function deleteGoalById(id) {
   state.goals = state.goals.filter((g) => g.id !== id);
-  saveGoals();
+  saveGoals(false);
+  sendData({ type: "goal_delete", data: { id } });
   renderGoals();
   renderAchievements();
   if (goalDetailId === id) closeGoalDetailModal();
@@ -893,8 +1151,8 @@ function renderGoalDetail() {
 
   const iconEl = document.getElementById("goalDetailIcon");
   iconEl.innerHTML = goal.icon
-    ? `<i class="bi ${goal.icon}"></i>`
-    : goal.emoji || "🎯";
+    ? `<i class="bi ${escapeHtml(goal.icon)}"></i>`
+    : escapeHtml(goal.emoji || "🎯");
   iconEl.style.background = color;
 
   document.getElementById("goalDetailName").textContent = goal.name;
@@ -908,9 +1166,9 @@ function renderGoalDetail() {
   ringFill.setAttribute("stroke", color);
   ringFill.setAttribute("stroke-dasharray", `${dash} ${circumference}`);
 
-  document.getElementById("goalDetailPersonHint").textContent = `lançado em ${
-    PERSONS[goal.person] || PERSONS.eu
-  }`;
+  document.getElementById("goalDetailPersonHint").textContent = `lançado em ${getPersonLabel(
+    goal.person || "eu"
+  )}`;
 
   const monthlyRow = document.getElementById("goalMonthlyRow");
   if (goal.monthlyContribution > 0) {
@@ -956,14 +1214,14 @@ function renderGoalHistory(goal) {
         <div class="goal-history-item">
           <div class="goal-history-info">
             <span class="goal-history-date">${formatDate(h.date)}</span>
-            <span class="goal-history-note">${noteText}</span>
+            <span class="goal-history-note">${escapeHtml(noteText)}</span>
           </div>
           <span class="goal-history-amount ${h.type}">${
         h.type === "withdraw" ? "-" : "+"
       } ${formatCurrency(h.amount)}</span>
-          <button class="btn-icon-sm delete" onclick="deleteGoalHistoryEntry('${
+          <button class="btn-icon-sm delete" onclick="deleteGoalHistoryEntry('${safeJsArg(
             goal.id
-          }','${h.id}')" title="Remover"><i class="bi bi-x"></i></button>
+          )}','${safeJsArg(h.id)}')" title="Remover"><i class="bi bi-x"></i></button>
         </div>`;
     })
     .join("");
@@ -994,7 +1252,8 @@ function addGoalEntry(goal, { amount, type, note, isMonthly }) {
     amount,
     date: entry.date,
     category: GOAL_CATEGORY,
-    person: goal.person || "eu",
+    person:
+      goal.person && goal.person !== SHARED_PERSON_KEY ? goal.person : "eu",
     type: isWithdraw ? "income" : "expense",
     isRecurring: false,
     goalId: goal.id,
@@ -1111,14 +1370,14 @@ function computeAchievementContext() {
   const recurringCount = state.transactions.filter((t) => t.isRecurring).length;
   const customCategoryCount = Object.keys(customCategories).length;
   const hasEuTransactions = state.transactions.some((t) => t.person === "eu");
-  const hasParceiroTransactions = state.transactions.some(
-    (t) => t.person === "parceiro"
+  const hasOtherMemberTransactions = state.transactions.some(
+    (t) => t.person !== "eu" && t.person !== SHARED_PERSON_KEY
   );
   const totalGoals = state.goals.length;
   const completedGoals = state.goals.filter(
     (g) => g.target > 0 && getGoalSaved(g) >= g.target
   ).length;
-  const hasSynced = localStorage.getItem(HAS_SYNCED_KEY) === "1";
+  const hasSynced = secureStorage.getItem(HAS_SYNCED_KEY) === "1";
   const hasMonthlyContributionSet = state.goals.some(
     (g) => g.monthlyContribution > 0
   );
@@ -1130,35 +1389,21 @@ function computeAchievementContext() {
     0
   );
 
-  const monthKeys = new Set(state.transactions.map((t) => t.date.slice(0, 7)));
-  const distinctMonthsActive = monthKeys.size;
+  const buckets = getMonthBuckets();
+  const distinctMonthsActive = buckets.size;
   const distinctCategoriesUsed = new Set(
     state.transactions.map((t) => t.category)
   ).size;
 
   let bestSavingsRate = 0;
-  monthKeys.forEach((key) => {
-    const [y, m] = key.split("-").map(Number);
-    const list = state.transactions.filter((t) => {
-      const d = new Date(t.date + "T00:00:00");
-      return d.getFullYear() === y && d.getMonth() === m - 1;
-    });
-    const inc = list
-      .filter((t) => t.type === "income")
-      .reduce((s, t) => s + t.amount, 0);
-    const exp = list
-      .filter((t) => t.type === "expense")
-      .reduce((s, t) => s + t.amount, 0);
+  let totalIncomeAllTime = 0;
+  let totalExpenseAllTime = 0;
+  buckets.forEach(({ income: inc, expense: exp }) => {
+    totalIncomeAllTime += inc;
+    totalExpenseAllTime += exp;
     const rate = inc > 0 ? ((inc - exp) / inc) * 100 : 0;
     if (rate > bestSavingsRate) bestSavingsRate = rate;
   });
-
-  const totalIncomeAllTime = state.transactions
-    .filter((t) => t.type === "income")
-    .reduce((s, t) => s + t.amount, 0);
-  const totalExpenseAllTime = state.transactions
-    .filter((t) => t.type === "expense")
-    .reduce((s, t) => s + t.amount, 0);
   const totalNetBalance = totalIncomeAllTime - totalExpenseAllTime;
 
   const now = new Date();
@@ -1166,22 +1411,14 @@ function computeAchievementContext() {
   let maxStreak = 0;
   for (let i = 11; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const list = state.transactions.filter((t) => {
-      const td = new Date(t.date + "T00:00:00");
-      return (
-        td.getFullYear() === d.getFullYear() && td.getMonth() === d.getMonth()
-      );
-    });
+    const { list, income: inc, expense: exp } = getMonthBucket(
+      d.getFullYear(),
+      d.getMonth()
+    );
     if (list.length === 0) {
       streak = 0;
       continue;
     }
-    const inc = list
-      .filter((t) => t.type === "income")
-      .reduce((s, t) => s + t.amount, 0);
-    const exp = list
-      .filter((t) => t.type === "expense")
-      .reduce((s, t) => s + t.amount, 0);
     if (inc - exp >= 0) {
       streak++;
       maxStreak = Math.max(maxStreak, streak);
@@ -1195,7 +1432,7 @@ function computeAchievementContext() {
     recurringCount,
     customCategoryCount,
     hasEuTransactions,
-    hasParceiroTransactions,
+    hasOtherMemberTransactions,
     totalGoals,
     completedGoals,
     hasSynced,
@@ -1274,53 +1511,654 @@ function toggleAchievementsExpanded() {
 }
 
 function loadProfile() {
-  const stored = localStorage.getItem(PROFILE_KEY);
+  const stored = secureStorage.getItem(PROFILE_KEY);
+  let profile = null;
   if (stored) {
-    state.userProfile = JSON.parse(stored);
+    try {
+      profile = JSON.parse(stored);
+    } catch (e) {
+      profile = null;
+    }
+  }
+
+  if (profile) {
+    const normalized = normalizeProfile(profile);
+    const migrated = !Array.isArray(profile.members);
+    state.userProfile = normalized;
+    if (migrated) saveProfile();
     updatePersonLabels();
     document.getElementById("appContent").style.display = "block";
+    // Usuários existentes também precisam aceitar a versão atual dos termos.
+    if (!getTermsAcceptance()) openTermsModal("require");
   } else {
+    renderOnboardingMemberFields();
+    // Se o cofre já existe (ex.: migração sem perfil), o PIN já foi definido.
+    document.getElementById("setupPinSection").style.display =
+      secureStorage.isUnlocked() ? "none" : "block";
     document.getElementById("onboardingScreen").style.display = "flex";
     document.getElementById("appContent").style.display = "none";
   }
 }
 
-function finishOnboarding() {
-  const myName = document.getElementById("setupMyName").value.trim() || "Eu";
-  const partnerName =
-    document.getElementById("setupPartnerName").value.trim() || "Parceiro(a)";
+function renderOnboardingMemberFields() {
+  const container = document.getElementById("setupMembersFields");
+  if (!container) return;
+  const count = parseInt(document.getElementById("setupMemberCount").value) || 1;
 
-  state.userProfile = { name: myName, partnerName: partnerName };
-  localStorage.setItem(PROFILE_KEY, JSON.stringify(state.userProfile));
+  const previous = {};
+  container.querySelectorAll("input[data-index]").forEach((input) => {
+    previous[input.dataset.index] = input.value;
+  });
+
+  let html = "";
+  for (let i = 2; i <= count; i++) {
+    html += `
+      <div class="mb-3">
+        <label class="form-label" for="setupMember${i}">Nome do ${i}º integrante</label>
+        <input type="text" id="setupMember${i}" class="form-control" data-index="${i}"
+          maxlength="30" placeholder="Ex: ${
+            ["", "", "Maria", "Pedro", "Ana", "Lucas"][i]
+          }" value="${escapeHtml(previous[i] || "")}" />
+      </div>`;
+  }
+  container.innerHTML = html;
+}
+
+async function finishOnboarding() {
+  const btn = document.getElementById("btnFinishOnboarding");
+  const errorEl = document.getElementById("setupError");
+  const pinEl = document.getElementById("setupPin");
+  const pinConfirmEl = document.getElementById("setupPinConfirm");
+  errorEl.textContent = "";
+  const needsPin = !secureStorage.isUnlocked();
+
+  const termsEl = document.getElementById("setupAcceptTerms");
+  if (!termsEl.checked) {
+    errorEl.textContent = "Para continuar, aceite os Termos de uso e a Política de privacidade.";
+    termsEl.focus();
+    return;
+  }
+
+  if (needsPin) {
+    const pinError = validateNewPin(pinEl.value, pinConfirmEl.value);
+    if (pinError) {
+      errorEl.textContent = pinError;
+      pinEl.classList.add("error");
+      pinEl.focus();
+      return;
+    }
+    pinEl.classList.remove("error");
+  }
+
+  const myName = document.getElementById("setupMyName").value.trim() || "Eu";
+  const count = parseInt(document.getElementById("setupMemberCount").value) || 1;
+  const members = [{ key: "eu", name: myName }];
+  for (let i = 2; i <= Math.min(count, MAX_MEMBERS); i++) {
+    const input = document.getElementById(`setupMember${i}`);
+    members.push({
+      key: MEMBER_SLOTS[i - 1],
+      name: (input && input.value.trim()) || `Integrante ${i}`,
+    });
+  }
+
+  if (needsPin) {
+    btn.disabled = true;
+    btn.innerHTML =
+      '<span class="spinner-border spinner-border-sm me-2"></span>Protegendo seus dados...';
+    try {
+      await secureStorage.create(pinEl.value);
+    } catch (e) {
+      console.error(e);
+      errorEl.textContent =
+        "Não foi possível criar a criptografia. Tente novamente.";
+      btn.disabled = false;
+      btn.textContent = "Começar";
+      return;
+    }
+    pinEl.value = "";
+    pinConfirmEl.value = "";
+    resetPasswordVisibility(document.getElementById("onboardingScreen"));
+  }
+
+  saveTermsAcceptance();
+  state.userProfile = normalizeProfile({ members });
+  saveProfile();
+  saveCustomCategories(false);
+  saveGoals(false);
 
   updatePersonLabels();
 
   document.getElementById("onboardingScreen").style.display = "none";
   document.getElementById("appContent").style.display = "block";
 
-  if (!localStorage.getItem(STORAGE_KEY)) {
+  if (!secureStorage.getItem(STORAGE_KEY)) {
     state.transactions = getSampleTransactions();
     saveData();
   }
 
   setupFilters();
+  renderMembersList();
   render();
 }
 
 function updatePersonLabels() {
-  PERSONS.eu = state.userProfile.name;
-  PERSONS.parceiro = state.userProfile.partnerName;
-  document.getElementById("tabBtnEu").textContent = PERSONS.eu;
-  document.getElementById("tabBtnParceiro").textContent = PERSONS.parceiro;
+  rebuildPersons();
+  renderFlowTabs();
 
   if (conn && conn.open) {
     sendData({ type: "profile_sync", data: state.userProfile });
   }
 }
 
+// ── Abas do card "Fluxo Financeiro" (uma por integrante) ──
+let activeFlowTab = "fluxo-barras";
+
+function renderFlowTabs() {
+  const tabs = document.getElementById("flowTabs");
+  const panels = document.getElementById("flowPersonPanels");
+  if (!tabs || !panels) return;
+
+  const members = getMembers();
+  const tabList = [
+    { id: "fluxo-barras", label: "Geral" },
+    ...members.map((m) => ({ id: `fluxo-${m.key}`, label: m.name })),
+    { id: "fluxo-info", label: "Indicadores" },
+  ];
+  if (!tabList.some((t) => t.id === activeFlowTab)) {
+    activeFlowTab = "fluxo-barras";
+  }
+
+  tabs.innerHTML = tabList
+    .map(
+      (t) =>
+        `<button type="button" class="card-tab-btn" data-target="${t.id}">${escapeHtml(
+          t.label
+        )}</button>`
+    )
+    .join("");
+
+  panels.innerHTML = members
+    .map(
+      (m) => `
+      <div id="fluxo-${m.key}" class="tab-content-inner" style="display: none">
+        <div class="person-detail-container" id="detail-${m.key}"></div>
+      </div>`
+    )
+    .join("");
+
+  showFlowTab(activeFlowTab);
+}
+
+function showFlowTab(id) {
+  activeFlowTab = id;
+  document
+    .querySelectorAll("#flowTabs .card-tab-btn")
+    .forEach((b) => b.classList.toggle("active", b.dataset.target === id));
+  document
+    .querySelectorAll(".tab-content-inner")
+    .forEach((c) => (c.style.display = c.id === id ? "block" : "none"));
+}
+
+// ── TELA DE BLOQUEIO / PIN ──
+let appInitialized = false;
+let lockMode = "unlock"; // "unlock" | "migrate" | "unsupported"
+
+function showLockScreen(mode) {
+  lockMode = mode;
+  const title = document.getElementById("lockTitle");
+  const text = document.getElementById("lockText");
+  const confirmRow = document.getElementById("lockPinConfirmRow");
+  const warning = document.getElementById("lockWarning");
+  const btn = document.getElementById("btnUnlock");
+  const form = document.getElementById("lockForm");
+  const forgot = document.getElementById("btnForgotPin");
+
+  document.getElementById("lockError").textContent = "";
+  document.getElementById("forgotPinPanel").style.display = "none";
+  form.style.display = "block";
+  const lockMeter = document
+    .getElementById("lockPin")
+    .closest(".pin-input-wrap")
+    ?.nextElementSibling;
+  if (lockMeter?.classList.contains("pin-strength")) {
+    lockMeter.style.display = mode === "migrate" ? "" : "none";
+  }
+
+  if (mode === "migrate") {
+    title.textContent = "Proteja seus dados";
+    text.textContent =
+      "Agora o Finanças Pro criptografa seus dados financeiros. Crie um PIN para continuar — seus dados atuais serão mantidos.";
+    document.getElementById("lockPinLabel").textContent = "Crie um PIN";
+    document.getElementById("lockPin").autocomplete = "new-password";
+    confirmRow.style.display = "block";
+    warning.style.display = "flex";
+    btn.textContent = "Criptografar e continuar";
+    forgot.style.display = "none";
+  } else if (mode === "unsupported") {
+    title.textContent = "Navegador não suportado";
+    text.textContent =
+      "A criptografia exige um navegador atualizado e o app aberto em um contexto seguro (HTTPS, localhost ou arquivo local).";
+    form.style.display = "none";
+    forgot.style.display = "none";
+  } else {
+    title.textContent = "Dados protegidos";
+    text.textContent = "Digite seu PIN para desbloquear.";
+    document.getElementById("lockPinLabel").textContent = "PIN";
+    confirmRow.style.display = "none";
+    warning.style.display = "none";
+    btn.textContent = "Desbloquear";
+    forgot.style.display = "inline-block";
+  }
+
+  document.getElementById("appContent").style.display = "none";
+  document.getElementById("lockScreen").style.display = "flex";
+  setTimeout(() => document.getElementById("lockPin").focus(), 50);
+}
+
+function hideLockScreen() {
+  document.getElementById("lockScreen").style.display = "none";
+  document.getElementById("lockPin").value = "";
+  document.getElementById("lockPinConfirm").value = "";
+  resetPasswordVisibility(document.getElementById("lockScreen"));
+  refreshStrengthMeters();
+}
+
+async function submitLockForm(event) {
+  event.preventDefault();
+  const pinEl = document.getElementById("lockPin");
+  const confirmEl = document.getElementById("lockPinConfirm");
+  const errorEl = document.getElementById("lockError");
+  const btn = document.getElementById("btnUnlock");
+  const label = btn.textContent;
+  errorEl.textContent = "";
+
+  if (lockMode === "migrate") {
+    const pinError = validateNewPin(pinEl.value, confirmEl.value);
+    if (pinError) {
+      errorEl.textContent = pinError;
+      return;
+    }
+  } else if (!pinEl.value) {
+    errorEl.textContent = "Digite o PIN.";
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Aguarde...';
+  try {
+    if (lockMode === "migrate") {
+      await secureStorage.migrateLegacy(pinEl.value);
+    } else {
+      await secureStorage.unlock(pinEl.value);
+    }
+  } catch (e) {
+    // PIN errado é esperado (falha de autenticação do AES-GCM); só registra
+    // erros inesperados.
+    if (lockMode === "migrate" || e.name !== "OperationError") console.error(e);
+    errorEl.textContent =
+      lockMode === "migrate"
+        ? "Não foi possível criptografar os dados. Tente novamente."
+        : "PIN incorreto.";
+    btn.disabled = false;
+    btn.textContent = label;
+    pinEl.select();
+    return;
+  }
+
+  btn.disabled = false;
+  btn.textContent = label;
+  hideLockScreen();
+  if (lockMode === "migrate") {
+    showToast("Seus dados agora estão criptografados", "success");
+  }
+  init();
+}
+
+function wipeAllDataAndRestart() {
+  secureStorage.wipe();
+  localStorage.removeItem(THEME_KEY);
+  localStorage.removeItem(TERMS_KEY);
+  removeFromLobby();
+  if (peer) peer.destroy();
+  location.reload();
+}
+
+// Pede o PIN em um modal. `validate` roda com o modal aberto e retorna uma
+// mensagem de erro (ou null) — assim o usuário pode corrigir sem recomeçar.
+function askPin({ title, message, confirmLabel = "Confirmar", validate }) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById("pinPromptModal");
+    const form = document.getElementById("pinPromptForm");
+    const input = document.getElementById("pinPromptInput");
+    const errorEl = document.getElementById("pinPromptError");
+    const btnOk = document.getElementById("btnConfirmPinPrompt");
+    const btnCancel = document.getElementById("btnCancelPinPrompt");
+
+    document.getElementById("pinPromptTitle").textContent = title;
+    document.getElementById("pinPromptText").textContent = message;
+    btnOk.textContent = confirmLabel;
+    errorEl.textContent = "";
+    input.value = "";
+
+    const close = (result) => {
+      modal.classList.remove("active");
+      form.onsubmit = null;
+      btnCancel.onclick = null;
+      input.value = "";
+      resetPasswordVisibility(modal);
+      btnOk.disabled = false;
+      resolve(result);
+    };
+
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const pin = input.value;
+      if (!pin) {
+        errorEl.textContent = "Digite o PIN.";
+        return;
+      }
+      btnOk.disabled = true;
+      btnOk.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      const error = validate ? await validate(pin) : null;
+      btnOk.disabled = false;
+      btnOk.textContent = confirmLabel;
+      if (error) {
+        errorEl.textContent = error;
+        input.select();
+        return;
+      }
+      close(pin);
+    };
+    btnCancel.onclick = () => close(null);
+
+    modal.classList.add("active");
+    setTimeout(() => input.focus(), 50);
+  });
+}
+
+function openChangePinModal() {
+  ["currentPin", "newPin", "newPinConfirm"].forEach(
+    (id) => (document.getElementById(id).value = "")
+  );
+  document.getElementById("changePinError").textContent = "";
+  refreshStrengthMeters();
+  document.getElementById("changePinModal").classList.add("active");
+  setTimeout(() => document.getElementById("currentPin").focus(), 50);
+}
+
+function closeChangePinModal() {
+  ["currentPin", "newPin", "newPinConfirm"].forEach(
+    (id) => (document.getElementById(id).value = "")
+  );
+  const modal = document.getElementById("changePinModal");
+  resetPasswordVisibility(modal);
+  refreshStrengthMeters();
+  modal.classList.remove("active");
+}
+
+async function submitChangePin(event) {
+  event.preventDefault();
+  const current = document.getElementById("currentPin").value;
+  const next = document.getElementById("newPin").value;
+  const confirmation = document.getElementById("newPinConfirm").value;
+  const errorEl = document.getElementById("changePinError");
+  const btn = document.getElementById("btnSaveChangePin");
+  errorEl.textContent = "";
+
+  if (!current) {
+    errorEl.textContent = "Informe o PIN atual.";
+    return;
+  }
+  const pinError = validateNewPin(next, confirmation);
+  if (pinError) {
+    errorEl.textContent = pinError;
+    return;
+  }
+  if (next === current) {
+    errorEl.textContent = "O novo PIN deve ser diferente do atual.";
+    return;
+  }
+
+  btn.disabled = true;
+  const original = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Recriptografando...';
+  try {
+    await secureStorage.changePin(current, next);
+    closeChangePinModal();
+    showToast("PIN alterado com sucesso!", "success");
+  } catch (e) {
+    errorEl.textContent =
+      e.message === "PIN atual incorreto"
+        ? "PIN atual incorreto."
+        : "Não foi possível alterar o PIN.";
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+// Botão "olho" em todos os campos de PIN, para conferir o que foi digitado.
+function setupPasswordToggles() {
+  document.querySelectorAll('input[type="password"]').forEach((input) => {
+    if (input.parentElement.classList.contains("pin-input-wrap")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "pin-input-wrap";
+    // Classes de margem ficam no wrapper para não desalinhar o botão.
+    [...input.classList]
+      .filter((c) => /^m[tbyxse]?-\d$/.test(c))
+      .forEach((c) => {
+        input.classList.remove(c);
+        wrap.classList.add(c);
+      });
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "pin-toggle";
+    btn.setAttribute("aria-label", "Mostrar PIN");
+    btn.setAttribute("aria-pressed", "false");
+    btn.innerHTML = '<i class="bi bi-eye"></i>';
+    btn.onclick = () => {
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      btn.setAttribute("aria-pressed", String(show));
+      btn.setAttribute("aria-label", show ? "Ocultar PIN" : "Mostrar PIN");
+      btn.innerHTML = `<i class="bi ${show ? "bi-eye-slash" : "bi-eye"}"></i>`;
+      input.focus();
+    };
+    wrap.appendChild(btn);
+  });
+}
+
+// Volta todos os campos de PIN para o modo oculto (ao abrir/fechar telas).
+function resetPasswordVisibility(root = document) {
+  root.querySelectorAll(".pin-input-wrap").forEach((wrap) => {
+    const input = wrap.querySelector("input");
+    const btn = wrap.querySelector(".pin-toggle");
+    if (input.type !== "password") btn.click();
+  });
+}
+
+// Medidor de força: apenas informa, não bloqueia PINs simples.
+function setupStrengthMeters() {
+  document.querySelectorAll("input[data-strength]").forEach((input) => {
+    const meter = document.createElement("div");
+    meter.className = "pin-strength";
+    meter.dataset.level = "0";
+    meter.setAttribute("aria-live", "polite");
+    meter.innerHTML = `
+      <div class="pin-strength-bars"><span></span><span></span><span></span></div>
+      <span class="pin-strength-text">Segurança do PIN: —</span>`;
+    const wrap = input.closest(".pin-input-wrap") || input;
+    wrap.insertAdjacentElement("afterend", meter);
+    const update = () => {
+      const s = getPinStrength(input.value);
+      meter.dataset.level = String(s.level);
+      meter.querySelector(".pin-strength-text").textContent = s.level
+        ? `Segurança do PIN: ${s.label} — ${s.hint}`
+        : "Segurança do PIN: —";
+    };
+    input.addEventListener("input", update);
+    input._updateStrength = update;
+  });
+}
+
+function refreshStrengthMeters() {
+  document
+    .querySelectorAll("input[data-strength]")
+    .forEach((input) => input._updateStrength && input._updateStrength());
+}
+
+// ── TERMOS DE USO E PRIVACIDADE (LGPD) ──
+const TERMS_KEY = "financas-pro-terms";
+const TERMS_VERSION = 2;
+
+function getTermsAcceptance() {
+  try {
+    const data = JSON.parse(localStorage.getItem(TERMS_KEY) || "null");
+    return data && data.version === TERMS_VERSION ? data : null;
+  } catch (e) {
+    return null; // registro inválido: pede o aceite novamente
+  }
+}
+
+function saveTermsAcceptance() {
+  localStorage.setItem(
+    TERMS_KEY,
+    JSON.stringify({ version: TERMS_VERSION, acceptedAt: new Date().toISOString() })
+  );
+}
+
+// mode: "read" (só leitura, pode fechar) | "require" (precisa aceitar)
+function openTermsModal(mode = "read") {
+  const modal = document.getElementById("termsModal");
+  const accepted = getTermsAcceptance();
+  modal.dataset.mode = mode;
+  document.getElementById("btnCloseTermsX").style.display =
+    mode === "require" ? "none" : "";
+  document.getElementById("termsRequireActions").style.display =
+    mode === "require" ? "flex" : "none";
+  document.getElementById("termsReadActions").style.display =
+    mode === "require" ? "none" : "flex";
+  document.getElementById("termsAcceptedInfo").textContent = accepted
+    ? `Aceito em ${new Date(accepted.acceptedAt).toLocaleString("pt-BR")}.`
+    : "";
+  modal.querySelector(".modal-body").scrollTop = 0;
+  modal.classList.add("active");
+}
+
+function closeTermsModal() {
+  document.getElementById("termsModal").classList.remove("active");
+}
+
+function bindSecurityUi() {
+  setupPasswordToggles();
+  setupStrengthMeters();
+
+  document.getElementById("btnCloseTermsX").onclick = closeTermsModal;
+  // "Entendi" vale como aceite: marca o checkbox do primeiro acesso.
+  document.getElementById("btnCloseTerms").onclick = () => {
+    const check = document.getElementById("setupAcceptTerms");
+    if (check) {
+      check.checked = true;
+      const err = document.getElementById("setupError");
+      if (err.textContent.includes("Termos")) err.textContent = "";
+    }
+    closeTermsModal();
+  };
+  document.getElementById("btnAcceptTerms").onclick = () => {
+    saveTermsAcceptance();
+    closeTermsModal();
+    showToast("Termos aceitos", "success");
+  };
+  document.getElementById("btnDeclineTerms").onclick = () => {
+    closeTermsModal();
+    document.getElementById("deleteAccountModal").classList.add("active");
+  };
+  document.querySelectorAll("[data-open-terms]").forEach((el) => {
+    el.onclick = (e) => {
+      e.preventDefault();
+      openTermsModal("read");
+    };
+  });
+
+  document.getElementById("lockForm").onsubmit = submitLockForm;
+  document.getElementById("btnForgotPin").onclick = () => {
+    document.getElementById("forgotPinPanel").style.display = "block";
+  };
+  document.getElementById("btnCancelForgotPin").onclick = () => {
+    document.getElementById("forgotPinPanel").style.display = "none";
+  };
+  document.getElementById("btnConfirmWipe").onclick = wipeAllDataAndRestart;
+
+  document.getElementById("changePinForm").onsubmit = submitChangePin;
+  document.getElementById("btnCloseChangePin").onclick = closeChangePinModal;
+  document.getElementById("btnCancelChangePin").onclick = closeChangePinModal;
+  document.getElementById("btnChangePinMenu").onclick = (e) => {
+    e.preventDefault();
+    openChangePinModal();
+  };
+  document.getElementById("btnLockMenu").onclick = async (e) => {
+    e.preventDefault();
+    await secureStorage.flush();
+    if (peer) peer.destroy();
+    location.reload();
+  };
+}
+
+async function bootstrap() {
+  loadTheme();
+  bindSecurityUi();
+
+  if (!isCryptoAvailable()) {
+    showLockScreen("unsupported");
+    return;
+  }
+  if (secureStorage.hasVault()) {
+    showLockScreen("unlock");
+  } else if (secureStorage.hasLegacyPlainData()) {
+    showLockScreen("migrate");
+  } else {
+    init();
+  }
+}
+
+// PeerJS é carregado só quando o usuário abre "Sincronizar integrantes":
+// a página abre mais rápido e nenhuma conexão externa é feita sem necessidade.
+const PEERJS_URL = "https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js";
+let peerLoading = null;
+
+function ensurePeer() {
+  if (peer) return Promise.resolve(peer);
+  if (!peerLoading) {
+    peerLoading = new Promise((resolve, reject) => {
+      if (typeof Peer !== "undefined") return resolve();
+      const script = document.createElement("script");
+      script.src = PEERJS_URL;
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = () => reject(new Error("Falha ao carregar PeerJS"));
+      document.head.appendChild(script);
+    })
+      .then(() => {
+        initPeer();
+        return peer;
+      })
+      .catch((err) => {
+        peerLoading = null;
+        console.error(err);
+        document.getElementById("peerStatusMsg").textContent =
+          "Não foi possível carregar a conexão. Verifique a internet.";
+        throw err;
+      });
+  }
+  return peerLoading;
+}
+
 function initPeer() {
   peer = new Peer(null, {
-    debug: 2,
+    debug: 1,
   });
 
   peer.on("open", (id) => {
@@ -1334,13 +2172,10 @@ function initPeer() {
   });
 
   peer.on("connection", (connection) => {
-    const partnerName = connection.metadata?.name || "Alguém";
-    pendingConnections[connection.peer] = connection;
-    setupConnectionListeners(connection);
-    showConnectionRequest(
-      connection.peer,
-      `${partnerName} quer sincronizar as finanças com você.`
-    );
+    handleIncomingConnection(connection).catch((err) => {
+      console.error("Falha ao preparar a conexão:", err);
+      connection.close();
+    });
   });
 
   peer.on("disconnected", () => {
@@ -1356,23 +2191,38 @@ function initPeer() {
   });
 }
 
-function connectToPeer(remoteIdArg = null) {
+// Quem inicia o convite envia sua chave pública no metadata; quem aceita
+// responde com a dele. A partir daí, tudo trafega cifrado (PeerCrypto).
+async function connectToPeer(remoteIdArg = null) {
   const input = document.getElementById("remotePeerIdInput");
   const remoteId = remoteIdArg || input.value.trim();
-  if (!remoteId) return showToast("Insira o ID do parceiro", "error");
+  if (!remoteId) return showToast("Insira o ID do integrante", "error");
   if (!peer) return showToast("Conexão ainda não iniciada", "error");
 
   if (remoteId === myPeerId) {
     return showToast("Você não pode conectar com você mesmo", "warning");
   }
   if (pendingConnections[remoteId] || (conn && conn.peer === remoteId)) {
-    return showToast("Convite já enviado para esse parceiro", "warning");
+    return showToast("Convite já enviado para esse integrante", "warning");
+  }
+
+  let me;
+  try {
+    me = await PeerCrypto.identity();
+  } catch (e) {
+    console.error(e);
+    return showToast("Não foi possível preparar a criptografia", "error");
   }
 
   const connection = peer.connect(remoteId, {
     reliable: true,
-    metadata: { name: state.userProfile.name || "Parceiro" },
+    metadata: {
+      name: state.userProfile.name || "Integrante",
+      pub: me.publicKey,
+      proto: P2P_PROTOCOL,
+    },
   });
+  connection._initiator = true;
 
   pendingConnections[remoteId] = connection;
   setupConnectionListeners(connection);
@@ -1380,18 +2230,50 @@ function connectToPeer(remoteIdArg = null) {
   if (!remoteIdArg) input.value = "";
 }
 
+function attachPeerIdentity(connection, publicKey, name) {
+  connection._remotePub = publicKey;
+  connection._remoteName = String(name || "Integrante").slice(0, 30);
+}
+
+async function handleIncomingConnection(connection) {
+  const meta = connection.metadata || {};
+  const partnerName = String(meta.name || "Alguém").slice(0, 30);
+  setupConnectionListeners(connection);
+
+  if (meta.proto !== P2P_PROTOCOL || !PeerCrypto.isValidPublicKey(meta.pub)) {
+    sendWhenOpen(connection, {
+      type: "connection_rejected",
+      data: { reason: "protocol" },
+    });
+    setTimeout(() => connection.close(), 250);
+    showToast(
+      `${partnerName} usa uma versão sem criptografia. Peça para atualizar o app.`,
+      "warning"
+    );
+    return;
+  }
+
+  attachPeerIdentity(connection, meta.pub, partnerName);
+  pendingConnections[connection.peer] = connection;
+  showConnectionRequest(connection);
+}
+
 function setupConnectionListeners(connection) {
+  // Fila por conexão: decifrar é assíncrono e a ordem das mensagens importa.
+  connection._rx = Promise.resolve();
   connection.on("data", (payload) => {
-    handleReceivedData(payload, connection);
+    connection._rx = connection._rx
+      .then(() => processIncomingMessage(connection, payload))
+      .catch((err) => console.error("Erro ao processar mensagem:", err));
   });
 
   connection.on("close", () => {
     delete pendingConnections[connection.peer];
     if (conn && conn.peer === connection.peer) {
       conn = null;
-      document.getElementById("connectedPeerSection").style.display = "none";
+      renderConnectedPeer();
       updateConnectionStatus("online");
-      showToast("Parceiro desconectado", "warning");
+      showToast("Integrante desconectado", "warning");
     }
   });
 
@@ -1408,34 +2290,112 @@ function sendWhenOpen(connection, payload) {
   }
 }
 
+// Envia cifrado com a chave da sessão; nunca envia dados em texto puro.
+function secureSend(connection, payload) {
+  if (!connection || !connection._sessionKey) return;
+  connection._tx = (connection._tx || Promise.resolve())
+    .then(() => PeerCrypto.encryptMessage(connection._sessionKey, payload))
+    .then((message) => sendWhenOpen(connection, message))
+    .catch((err) => console.error("Falha ao cifrar mensagem P2P:", err));
+}
+
+// Só "connection_accepted"/"connection_rejected" trafegam abertos (contêm
+// apenas nome e chave pública). Todo o resto precisa vir cifrado.
+async function processIncomingMessage(connection, payload) {
+  if (!payload || typeof payload !== "object") return;
+
+  if (payload.type === "enc") {
+    if (!connection._sessionKey || connection !== conn) return;
+    let message;
+    try {
+      message = await PeerCrypto.decryptMessage(connection._sessionKey, payload);
+    } catch (e) {
+      console.warn("Mensagem P2P inválida descartada");
+      return;
+    }
+    handleReceivedData(message, connection);
+    return;
+  }
+
+  if (!connection._initiator || connection._sessionKey) return;
+
+  if (payload.type === "connection_rejected") {
+    showToast(
+      payload.data?.reason === "protocol"
+        ? "O outro aparelho usa uma versão incompatível do app"
+        : "Seu convite foi recusado",
+      "warning"
+    );
+    delete pendingConnections[connection.peer];
+    setTimeout(() => connection.close(), 250);
+    return;
+  }
+
+  if (payload.type === "connection_accepted") {
+    const data = payload.data || {};
+    if (data.proto !== P2P_PROTOCOL || !PeerCrypto.isValidPublicKey(data.pub)) {
+      showToast("O outro aparelho usa uma versão sem criptografia", "warning");
+      connection.close();
+      return;
+    }
+    try {
+      attachPeerIdentity(connection, data.pub, data.name);
+      connection._sessionKey = await PeerCrypto.deriveSessionKey(data.pub);
+    } catch (e) {
+      console.error(e);
+      showToast("Falha na troca de chaves. Tente novamente.", "error");
+      connection.close();
+      return;
+    }
+    showToast(`${connection._remoteName} aceitou seu convite!`, "success");
+    markConnected(connection);
+  }
+}
+
 function markConnected(connection) {
   conn = connection;
   delete pendingConnections[connection.peer];
 
-  document.getElementById("connectedPeerSection").style.display = "flex";
   updateConnectionStatus("connected");
+  renderConnectedPeer();
   document.getElementById("syncModal").classList.remove("active");
-  showToast("Parceiro conectado!", "success");
+  showToast("Conexão criptografada estabelecida", "success");
 
-  localStorage.setItem(HAS_SYNCED_KEY, "1");
+  secureStorage.setItem(HAS_SYNCED_KEY, "1");
   renderAchievements();
   removeFromLobby();
 
-  sendWhenOpen(connection, {
-    type: "profile_sync",
-    data: state.userProfile,
-  });
-  sendWhenOpen(connection, {
-    type: "categories_sync",
-    data: customCategories,
-  });
-  sendWhenOpen(connection, { type: "goals_sync", data: state.goals });
-  sendWhenOpen(connection, { type: "full_sync", data: state.transactions });
+  if (document.getElementById("userListModal").classList.contains("active")) {
+    hideUserListModal();
+  }
+
+  // Nenhum dado é enviado automaticamente: cada lado decide se envia.
+  connection._live = false;
+  connection._inMap = {};
+  openSyncStartModal();
 }
 
-function showConnectionRequest(peerId, message) {
-  incomingRequestPeerId = peerId;
-  document.getElementById("connectionRequestText").textContent = message;
+function renderConnectedPeer() {
+  const section = document.getElementById("connectedPeerSection");
+  if (!section) return;
+  if (!conn || !conn._sessionKey) {
+    section.style.display = "none";
+    return;
+  }
+  document.getElementById("connectedPeerName").textContent = conn._remoteName;
+  const live = document.getElementById("connectedLiveStatus");
+  live.className = `live-status ${conn._live ? "on" : "off"}`;
+  live.innerHTML = conn._live
+    ? '<i class="bi bi-broadcast"></i> Tempo real ativo: alterações são enviadas na hora.'
+    : '<i class="bi bi-pause-circle"></i> Nenhum dado trocado ainda. Envie seus dados para ativar o tempo real.';
+  section.style.display = "block";
+}
+
+function showConnectionRequest(connection) {
+  incomingRequestPeerId = connection.peer;
+  document.getElementById(
+    "connectionRequestText"
+  ).textContent = `${connection._remoteName} quer sincronizar as finanças com você.`;
   document.getElementById("connectionRequestModal").classList.add("active");
 }
 
@@ -1444,14 +2404,31 @@ function hideConnectionRequest() {
   incomingRequestPeerId = null;
 }
 
-function acceptConnectionRequest() {
+async function acceptConnectionRequest() {
   const connection = pendingConnections[incomingRequestPeerId];
   hideConnectionRequest();
   if (!connection) return;
 
+  let me;
+  try {
+    connection._sessionKey = await PeerCrypto.deriveSessionKey(
+      connection._remotePub
+    );
+    me = await PeerCrypto.identity();
+  } catch (e) {
+    console.error(e);
+    showToast("Falha na troca de chaves", "error");
+    connection.close();
+    return;
+  }
+
   sendWhenOpen(connection, {
     type: "connection_accepted",
-    data: { name: state.userProfile.name || "Parceiro" },
+    data: {
+      name: state.userProfile.name || "Integrante",
+      pub: me.publicKey,
+      proto: P2P_PROTOCOL,
+    },
   });
   markConnected(connection);
 }
@@ -1467,16 +2444,19 @@ function rejectConnectionRequest() {
   delete pendingConnections[peerId];
 }
 
+// Atualizações em tempo real: só depois que uma troca de dados foi aceita.
 function sendData(payload) {
-  if (conn && conn.open) {
-    conn.send(payload);
-  }
+  if (isLive()) secureSend(conn, payload);
 }
 
-// ── LOBBY (descoberta de parceiros via API) ──
+// ── LOBBY (descoberta de integrantes via API) ──
+// Só existe registro no lobby enquanto a busca está em uso.
+let lobbyRegistered = false;
+
 async function registerInLobby() {
   if (!myPeerId || !state.userProfile.name) return;
   try {
+    lobbyRegistered = true;
     await fetch(
       `${LOBBY_API_URL}/cadastro?nickname=${encodeURIComponent(
         state.userProfile.name
@@ -1496,15 +2476,19 @@ async function fetchLobbyUsers() {
     if (!Array.isArray(users)) return [];
     return users.filter((user) => user.id && user.id !== myPeerId);
   } catch (error) {
-    console.error("Erro ao buscar parceiros:", error);
+    console.error("Erro ao buscar integrantes:", error);
     return [];
   }
 }
 
 async function removeFromLobby() {
-  if (!myPeerId) return;
+  if (!myPeerId || !lobbyRegistered) return;
+  lobbyRegistered = false;
   try {
-    await fetch(`${LOBBY_API_URL}/delete?id=${encodeURIComponent(myPeerId)}`);
+    // keepalive: a remoção também funciona ao fechar a aba (minimização de dados).
+    await fetch(`${LOBBY_API_URL}/delete?id=${encodeURIComponent(myPeerId)}`, {
+      keepalive: true,
+    });
   } catch (error) {
     console.error("Erro ao sair do lobby:", error);
   }
@@ -1533,22 +2517,22 @@ async function updateLobbyList() {
   if (users.length === 0) {
     listEl.innerHTML = `<div class="user-list-empty">
       <i class="bi bi-people" style="font-size:1.75rem;display:block;margin-bottom:0.5rem;"></i>
-      Ninguém online agora. Atualize a lista ou compartilhe seu ID direto com o parceiro.
+      Ninguém online agora. Atualize a lista ou compartilhe seu ID diretamente com o integrante.
     </div>`;
     return;
   }
 
   listEl.innerHTML = users
     .map((user) => {
-      const name = user.nickname || "Parceiro";
-      const initial = name.trim().charAt(0) || "?";
+      const name = String(user.nickname || "Integrante");
+      const initial = escapeHtml(name.trim().charAt(0) || "?");
       return `
       <div class="user-list-item">
         <div class="user-list-info">
           <span class="user-list-avatar">${initial}</span>
-          <span class="user-list-name">${name}</span>
+          <span class="user-list-name">${escapeHtml(name)}</span>
         </div>
-        <button type="button" class="btn btn-primary btn-sm" onclick="connectFromLobby('${user.id}')">
+        <button type="button" class="btn btn-primary btn-sm" onclick="connectFromLobby('${safeJsArg(user.id)}')">
           Conectar
         </button>
       </div>`;
@@ -1561,87 +2545,607 @@ function connectFromLobby(peerId) {
   hideUserListModal();
 }
 
-function swapTransactionOwnership(t) {
-  const newT = { ...t };
-  if (newT.person === "eu") {
-    newT.person = "parceiro";
-  } else if (newT.person === "parceiro") {
-    newT.person = "eu";
-  }
-  return newT;
+// ── SINCRONIZAÇÃO: OFERTA DE DADOS + TEMPO REAL ──
+// 1. Conectar NÃO envia dados. Os dois lados veem a pergunta "Enviar seus dados?".
+// 2. Quem envia manda uma oferta; o outro lado vê o resumo, ajusta a
+//    correspondência de integrantes e aceita ou cancela.
+// 3. Ao aceitar, um backup automático é salvo antes de mesclar os dados.
+// 4. A partir daí a conexão fica "em tempo real" para os dois lados:
+//    lançamentos, metas, categorias e novos integrantes são enviados na hora.
+//
+// Cada aparelho guarda os dados no SEU espaço de integrantes ("eu" = dono
+// do aparelho). Quem recebe traduz os integrantes do outro com o mapa
+// conn._inMap (chave remota -> chave local), definido na tela de aceite.
+const AUTO_BACKUP_KEY = "financas-pro-auto-backup";
+const NEW_MEMBER = "__novo__";
+let pendingOffer = null;
+
+function normalizeName(name) {
+  return String(name || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
+function isLive() {
+  return !!(conn && conn.open && conn._sessionKey && conn._live);
+}
+
+function sanitizeRemoteMembers(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter((m) => m && MEMBER_SLOTS.includes(m.key))
+    .map((m) => ({ key: m.key, name: String(m.name || "Integrante").slice(0, 30) }));
+}
+
+// Sugestão inicial: 1) mesmo nome; 2) regra antiga "eu" <-> "parceiro";
+// 3) novo integrante (se houver vaga); 4) o primeiro integrante livre.
+function suggestMemberMapping(remoteMembers) {
+  const local = getMembers();
+  const used = new Set();
+  const map = {};
+  remoteMembers.forEach((rm) => {
+    const match = local.find(
+      (l) => !used.has(l.key) && normalizeName(l.name) === normalizeName(rm.name)
+    );
+    if (match) {
+      map[rm.key] = match.key;
+      used.add(match.key);
+    }
+  });
+  remoteMembers.forEach((rm) => {
+    if (map[rm.key]) return;
+    const cand = rm.key === "eu" ? "parceiro" : rm.key === "parceiro" ? "eu" : null;
+    if (cand && local.some((l) => l.key === cand) && !used.has(cand)) {
+      map[rm.key] = cand;
+      used.add(cand);
+    }
+  });
+  let freeSlots = MAX_MEMBERS - local.length;
+  remoteMembers.forEach((rm) => {
+    if (map[rm.key]) return;
+    if (freeSlots > 0) {
+      map[rm.key] = NEW_MEMBER;
+      freeSlots--;
+      return;
+    }
+    const free = local.find((l) => !used.has(l.key)) || local[0];
+    map[rm.key] = free.key;
+    used.add(free.key);
+  });
+  return map;
+}
+
+// Cria os integrantes marcados como "novo" e devolve o mapa final.
+function applyMemberMapping(remoteMembers, map) {
+  const finalMap = {};
+  let members = getMembers();
+  remoteMembers.forEach((rm) => {
+    let target = map[rm.key];
+    if (target === NEW_MEMBER) {
+      const existing = members.find((m) => normalizeName(m.name) === normalizeName(rm.name));
+      if (existing) {
+        target = existing.key;
+      } else {
+        const used = new Set(members.map((m) => m.key));
+        const slot = MEMBER_SLOTS.find((k) => !used.has(k));
+        if (!slot) {
+          target = "eu";
+        } else {
+          members = [...members, { key: slot, name: rm.name }];
+          target = slot;
+        }
+      }
+    }
+    finalMap[rm.key] = target;
+  });
+  if (members.length !== getMembers().length) {
+    state.userProfile.members = members;
+    saveProfile();
+    rebuildPersons();
+    renderFlowTabs();
+    setupFilters();
+    renderMembersList();
+  }
+  return finalMap;
+}
+
+// Traduz o integrante de um item vindo do outro aparelho.
+function resolveRemotePerson(key) {
+  if (!conn) return key;
+  conn._inMap = conn._inMap || {};
+  if (conn._inMap[key]) return conn._inMap[key];
+  if (key === SHARED_PERSON_KEY) return key;
+  // Integrante que o outro lado criou depois: cria/associa pelo nome.
+  const rm = (conn._remoteMembers || []).find((m) => m.key === key);
+  if (rm) {
+    const map = applyMemberMapping([rm], { [key]: NEW_MEMBER });
+    conn._inMap[key] = map[key];
+    return map[key];
+  }
+  return "eu";
+}
+
+function translateIncomingTransaction(t) {
+  return { ...t, person: resolveRemotePerson(t.person) };
+}
+
+function translateIncomingGoal(g) {
+  return { ...g, person: resolveRemotePerson(g.person || "eu") };
+}
+
+// ── Backup automático (guardado dentro do cofre cifrado) ──
+function createAutoBackup(reason) {
+  const backup = {
+    at: new Date().toISOString(),
+    reason,
+    data: {
+      transactions: state.transactions,
+      goals: state.goals,
+      categories: customCategories,
+      members: getMembers(),
+    },
+  };
+  secureStorage.setItem(AUTO_BACKUP_KEY, JSON.stringify(backup));
+  return backup;
+}
+
+function getAutoBackup() {
+  try {
+    return JSON.parse(secureStorage.getItem(AUTO_BACKUP_KEY) || "null");
+  } catch (e) {
+    return null; // backup corrompido: tratado como inexistente
+  }
+}
+
+function openAutoBackupModal() {
+  const backup = getAutoBackup();
+  const info = document.getElementById("autoBackupInfo");
+  const btn = document.getElementById("btnRestoreAutoBackup");
+  if (!backup) {
+    info.innerHTML =
+      '<p class="text-secondary">Nenhum backup automático ainda. Ele é criado sempre que você aceita dados de outro integrante.</p>';
+    btn.disabled = true;
+  } else {
+    const d = backup.data || {};
+    info.innerHTML = `
+      <div class="backup-card">
+        <div><span>Criado em</span><strong>${escapeHtml(new Date(backup.at).toLocaleString("pt-BR"))}</strong></div>
+        <div><span>Motivo</span><strong>${escapeHtml(backup.reason || "-")}</strong></div>
+        <div><span>Conteúdo</span><strong>${(d.transactions || []).length} lançamentos · ${(d.goals || []).length} metas · ${(d.members || []).length} integrantes</strong></div>
+      </div>
+      <p class="field-hint">Restaurar substitui os dados atuais deste aparelho pelos dados do backup. O outro aparelho não é alterado.</p>`;
+    btn.disabled = false;
+  }
+  document.getElementById("autoBackupModal").classList.add("active");
+}
+
+function restoreAutoBackup() {
+  const backup = getAutoBackup();
+  if (!backup || !backup.data) return;
+  const d = backup.data;
+  confirmDeleteAction = () => {
+    state.transactions = Array.isArray(d.transactions) ? d.transactions : [];
+    state.goals = Array.isArray(d.goals) ? d.goals : [];
+    customCategories = d.categories && typeof d.categories === "object" ? d.categories : {};
+    if (Array.isArray(d.members) && d.members.length) {
+      state.userProfile = normalizeProfile({ members: d.members });
+      saveProfile();
+      rebuildPersons();
+      renderFlowTabs();
+    }
+    // Restaurar é local: desliga o tempo real para não espalhar a mudança.
+    if (conn) conn._live = false;
+    saveCustomCategories(false);
+    saveGoals(false);
+    saveData(false);
+    setupFilters();
+    renderMembersList();
+    renderCategoriesSection();
+    render();
+    renderConnectedPeer();
+    document.getElementById("autoBackupModal").classList.remove("active");
+    showToast("Backup restaurado", "success");
+  };
+  document.getElementById("confirmModal").classList.add("active");
+}
+
+// ── Oferta de dados ──
+function openSyncStartModal() {
+  if (!conn) return;
+  document.getElementById("syncStartName").textContent = conn._remoteName;
+  document.getElementById("syncStartModal").classList.add("active");
+}
+
+function closeSyncStartModal() {
+  document.getElementById("syncStartModal").classList.remove("active");
+}
+
+function sendDataOffer() {
+  if (!conn || !conn._sessionKey) return showToast("Nenhum integrante conectado", "warning");
+  secureSend(conn, {
+    type: "data_offer",
+    data: {
+      members: getMembers(),
+      transactions: state.transactions,
+      goals: state.goals,
+      categories: customCategories,
+      sentAt: new Date().toISOString(),
+    },
+  });
+  closeSyncStartModal();
+  showToast(`Dados enviados. Aguardando ${conn._remoteName} aceitar...`, "success");
+}
+
+// ── Tela "Quem é quem?" (usada ao receber dados de um integrante E ao importar arquivo) ──
+const SKIP_MEMBER = "__ignorar__";
+const FALLBACK_MEMBER_NAMES = {
+  eu: "Dono do arquivo",
+  parceiro: "2º integrante",
+  membro3: "3º integrante",
+  membro4: "4º integrante",
+  membro5: "5º integrante",
+};
+
+// Pessoas presentes nos dados recebidos. Arquivos antigos não trazem os
+// nomes; nesse caso usamos rótulos pela posição do integrante.
+function describeOfferMembers(members, transactions, goals) {
+  const list = sanitizeRemoteMembers(members);
+  const hasNames = list.length > 0;
+  const used = new Set([
+    ...transactions.map((t) => t && t.person),
+    ...goals.map((g) => (g && g.person) || "eu"),
+  ]);
+  used.forEach((key) => {
+    if (!key || list.some((m) => m.key === key)) return;
+    if (key === SHARED_PERSON_KEY) {
+      list.push({ key, name: "Compartilhado (formato antigo)", legacy: true });
+    } else if (MEMBER_SLOTS.includes(key)) {
+      list.push({ key, name: FALLBACK_MEMBER_NAMES[key], unnamed: true });
+    }
+  });
+  if (!list.length) list.push({ key: "eu", name: FALLBACK_MEMBER_NAMES.eu, unnamed: true });
+  return { list, hasNames };
+}
+
+function suggestOfferMapping(members, source, hasNames) {
+  const local = getMembers();
+  const named = members.filter((m) => !m.legacy);
+  let map;
+  if (source === "file" && !hasNames) {
+    // Backup antigo sem nomes: normalmente é do próprio usuário (mesmas posições).
+    map = {};
+    let free = MAX_MEMBERS - local.length;
+    named.forEach((m) => {
+      if (local.some((l) => l.key === m.key)) map[m.key] = m.key;
+      else if (free-- > 0) map[m.key] = NEW_MEMBER;
+      else map[m.key] = "eu";
+    });
+  } else {
+    map = suggestMemberMapping(named);
+  }
+  members.filter((m) => m.legacy).forEach((m) => (map[m.key] = "eu"));
+  return map;
+}
+
+function readOfferMapping() {
+  const map = {};
+  document.querySelectorAll("#dataOfferMapping select[data-remote]").forEach((sel) => {
+    map[sel.dataset.remote] = sel.value;
+  });
+  return map;
+}
+
+// Resumo "o que será importado", atualizado conforme o usuário marca
+// "Não importar" em alguém.
+function updateOfferSummary() {
+  if (!pendingOffer) return;
+  const map = readOfferMapping();
+  const keep = (person) => map[person || "eu"] !== SKIP_MEMBER;
+  const tx = pendingOffer.transactions.filter((t) => keep(t.person)).length;
+  const goals = pendingOffer.goals.filter((g) => keep(g.person)).length;
+  const people = pendingOffer.members.filter((m) => !m.legacy && map[m.key] !== SKIP_MEMBER).length;
+  document.getElementById("dataOfferSummary").innerHTML = `
+    <div><strong>${people}</strong><span>integrante(s)</span></div>
+    <div><strong>${tx}</strong><span>lançamentos</span></div>
+    <div><strong>${goals}</strong><span>metas</span></div>
+    <div><strong>${Object.keys(pendingOffer.categories).length}</strong><span>categorias</span></div>`;
+}
+
+// source: "peer" (outro aparelho) | "file" (backup importado)
+function showDataOffer(data, { source = "peer", fromName = "", exportedAt = null } = {}) {
+  const transactions = (Array.isArray(data) ? data : Array.isArray(data.transactions) ? data.transactions : [])
+    .filter((t) => t && t.id && typeof t.date === "string");
+  const goals = Array.isArray(data.goals) ? data.goals.filter((g) => g && g.id) : [];
+  const categories =
+    data.categories && typeof data.categories === "object" && !Array.isArray(data.categories)
+      ? data.categories
+      : {};
+  const { list: members, hasNames } = describeOfferMembers(data.members, transactions, goals);
+
+  pendingOffer = { source, fromName, members, transactions, goals, categories };
+  if (source === "peer") conn._remoteMembers = members.filter((m) => !m.legacy && !m.unnamed);
+  closeSyncStartModal();
+
+  const isFile = source === "file";
+  document.getElementById("dataOfferTitle").textContent = isFile
+    ? "Importar backup"
+    : `${fromName} enviou os dados`;
+  const when = exportedAt && !Number.isNaN(Date.parse(exportedAt))
+    ? new Date(exportedAt).toLocaleString("pt-BR")
+    : null;
+  document.getElementById("dataOfferSubtitle").textContent = isFile
+    ? when
+      ? `Arquivo exportado em ${when}.`
+      : "Arquivo de backup."
+    : "";
+  document.getElementById("dataOfferModeRow").style.display = isFile ? "" : "none";
+  document.getElementById("offerModeMerge").checked = true;
+  document.getElementById("btnAcceptDataOffer").innerHTML = isFile
+    ? '<i class="bi bi-upload"></i> Importar'
+    : '<i class="bi bi-check-lg"></i> Aceitar dados';
+
+  const suggestion = suggestOfferMapping(members, source, hasNames);
+  const local = getMembers();
+  const canAdd = local.length < MAX_MEMBERS;
+  const counts = (key) => transactions.filter((t) => t.person === key).length;
+  const ownerLabel = isFile ? "dono do arquivo" : "quem enviou";
+
+  document.getElementById("dataOfferMapping").innerHTML = members
+    .map((rm) => {
+      const opts = local
+        .map((l) => `<option value="${escapeHtml(l.key)}" ${suggestion[rm.key] === l.key ? "selected" : ""}>${escapeHtml(l.name)}${l.key === "eu" ? " (você)" : ""}</option>`)
+        .join("");
+      const newOpt =
+        canAdd && !rm.legacy
+          ? `<option value="${NEW_MEMBER}" ${suggestion[rm.key] === NEW_MEMBER ? "selected" : ""}>+ Novo integrante "${escapeHtml(rm.name)}"</option>`
+          : "";
+      const skipOpt = `<option value="${SKIP_MEMBER}">Não importar</option>`;
+      const tag = rm.key === "eu" && !rm.unnamed ? `${ownerLabel} · ` : "";
+      return `
+      <div class="mapping-row">
+        <div class="mapping-remote">
+          <strong>${escapeHtml(rm.name)}</strong>
+          <span>${tag}${counts(rm.key)} lançamento(s)</span>
+        </div>
+        <i class="bi bi-arrow-right mapping-arrow"></i>
+        <select class="form-select" data-remote="${escapeHtml(rm.key)}" aria-label="Corresponde a">${opts}${newOpt}${skipOpt}</select>
+      </div>`;
+    })
+    .join("");
+  document.querySelectorAll("#dataOfferMapping select").forEach((sel) => {
+    sel.onchange = () => {
+      sel.closest(".mapping-row").classList.toggle("is-skipped", sel.value === SKIP_MEMBER);
+      updateOfferSummary();
+    };
+  });
+  updateOfferSummary();
+  document.getElementById("dataOfferError").textContent = "";
+  document.querySelector("#dataOfferModal .modal-window").scrollTop = 0;
+  document.getElementById("dataOfferModal").classList.add("active");
+}
+
+function acceptDataOffer() {
+  if (!pendingOffer) return;
+  const offer = pendingOffer;
+  const isFile = offer.source === "file";
+  if (!isFile && !conn) return;
+
+  const map = readOfferMapping();
+  const newCount = Object.values(map).filter((v) => v === NEW_MEMBER).length;
+  if (getMembers().length + newCount > MAX_MEMBERS) {
+    document.getElementById("dataOfferError").textContent = `Limite de ${MAX_MEMBERS} integrantes. Associe alguém a um integrante existente ou marque "Não importar".`;
+    return;
+  }
+  const kept = offer.members.filter((m) => map[m.key] !== SKIP_MEMBER);
+  if (!kept.length) {
+    document.getElementById("dataOfferError").textContent = "Selecione pelo menos um integrante para importar.";
+    return;
+  }
+
+  createAutoBackup(isFile ? "Antes de importar um backup" : `Antes de receber dados de ${offer.fromName}`);
+  const finalMap = applyMemberMapping(kept, map);
+  offer.members.forEach((m) => {
+    if (map[m.key] === SKIP_MEMBER) finalMap[m.key] = SKIP_MEMBER;
+  });
+
+  const target = (person) => finalMap[person || "eu"] || "eu";
+  const transactions = offer.transactions
+    .filter((t) => target(t.person) !== SKIP_MEMBER)
+    .map((t) => ({ ...t, person: target(t.person) }));
+  const goals = offer.goals
+    .filter((g) => target(g.person) !== SKIP_MEMBER)
+    .map((g) => ({ ...g, person: target(g.person) }));
+
+  let categoriesAdded = 0;
+  Object.entries(offer.categories).forEach(([key, cat]) => {
+    if (DEFAULT_CATEGORIES[key] || !cat || typeof cat !== "object") return;
+    if (!customCategories[key]) categoriesAdded++;
+    customCategories[key] = cat;
+  });
+  saveCustomCategories(false);
+
+  const replace = isFile && document.getElementById("offerModeReplace").checked;
+  let added;
+  if (replace) {
+    state.transactions = transactions;
+    state.goals = goals;
+    saveGoals(false);
+    saveData(false);
+    added = transactions.length;
+  } else {
+    mergeGoals(goals, { silent: true });
+    added = mergeTransactions(transactions, { silent: true });
+  }
+
+  if (isFile) {
+    // Conectado em tempo real: o outro aparelho também recebe o que entrou.
+    if (isLive()) {
+      sendData({ type: "profile_sync", data: state.userProfile });
+      sendData({ type: "categories_sync", data: customCategories });
+      sendData({ type: "goals_sync", data: goals });
+      sendData({ type: "full_sync", data: transactions });
+    }
+  } else {
+    conn._inMap = { ...(conn._inMap || {}), ...finalMap };
+    // O outro lado recebe o mapa inverso para traduzir o que EU enviar.
+    const inverse = {};
+    Object.entries(finalMap).forEach(([remoteKey, localKey]) => {
+      if (localKey !== SKIP_MEMBER && !inverse[localKey]) inverse[localKey] = remoteKey;
+    });
+    secureSend(conn, { type: "data_response", data: { accepted: true, map: inverse, members: getMembers() } });
+    conn._live = true;
+  }
+
+  pendingOffer = null;
+  document.getElementById("dataOfferModal").classList.remove("active");
+  setupFilters();
+  renderCategoriesSection();
+  render();
+  renderConnectedPeer();
+  const what = replace
+    ? `${added} lançamento(s) importados (dados substituídos)`
+    : `${added} lançamento(s) novos`;
+  showToast(
+    isFile
+      ? `${what}. Backup automático salvo.`
+      : `${what} recebidos. Backup automático salvo. Tempo real ativado.`,
+    "success"
+  );
+}
+
+function declineDataOffer() {
+  const offer = pendingOffer;
+  pendingOffer = null;
+  document.getElementById("dataOfferModal").classList.remove("active");
+  if (offer && offer.source === "peer" && conn) {
+    secureSend(conn, { type: "data_response", data: { accepted: false } });
+  }
+}
+
+// Recebe apenas mensagens já decifradas e autenticadas (processIncomingMessage).
 function handleReceivedData(payload, connection = null) {
+  if (!payload || typeof payload !== "object") return;
+  const data = payload.data;
+
+  if (payload.type === "data_offer") {
+    if (data && typeof data === "object") {
+      showDataOffer(data, { source: "peer", fromName: conn._remoteName });
+    }
+    return;
+  }
+  if (payload.type === "data_response") {
+    if (data?.accepted) {
+      if (data.map && typeof data.map === "object") {
+        conn._inMap = { ...(conn._inMap || {}) };
+        Object.entries(data.map).forEach(([remoteKey, localKey]) => {
+          if (MEMBER_SLOTS.includes(remoteKey) && getMembers().some((m) => m.key === localKey)) {
+            conn._inMap[remoteKey] = localKey;
+          }
+        });
+      }
+      conn._remoteMembers = sanitizeRemoteMembers(data.members);
+      conn._live = true;
+      renderConnectedPeer();
+      showToast(`${conn._remoteName} aceitou seus dados. Tempo real ativado.`, "success");
+    } else {
+      showToast(`${conn._remoteName} não aceitou os dados agora`, "warning");
+    }
+    return;
+  }
+
+  // Atualizações em tempo real só depois de uma troca aceita.
+  if (!connection || !connection._live) return;
+
   switch (payload.type) {
-    case "connection_accepted":
-      if (connection) {
-        showToast(
-          `${payload.data?.name || "Parceiro"} aceitou seu convite!`,
-          "success"
-        );
-        markConnected(connection);
+    case "profile_sync": {
+      const before = getMembers().length;
+      conn._remoteMembers = sanitizeRemoteMembers(data?.members);
+      conn._remoteMembers.forEach((m) => resolveRemotePerson(m.key));
+      if (getMembers().length > before) {
+        render();
+        showToast("Novo integrante sincronizado", "success");
       }
       break;
-
-    case "connection_rejected":
-      showToast("Seu convite foi recusado", "warning");
-      if (connection) {
-        delete pendingConnections[connection.peer];
-        setTimeout(() => connection.close(), 250);
-      }
-      break;
-
-    case "profile_sync":
-      break;
-
+    }
     case "categories_sync":
-      Object.assign(customCategories, payload.data);
-      saveCustomCategories(false);
-      setupFilters();
-      renderCategoryManageList();
-      render();
+      if (data && typeof data === "object") {
+        Object.assign(customCategories, data);
+        saveCustomCategories(false);
+        setupFilters();
+        renderCategoryManageList();
+        requestRender();
+      }
       break;
-
+    case "category_delete":
+      if (data?.key && customCategories[data.key]) {
+        delete customCategories[data.key];
+        saveCustomCategories(false);
+        setupFilters();
+        renderCategoryManageList();
+        requestRender();
+      }
+      break;
     case "goals_sync":
-      mergeGoals(payload.data);
+      if (Array.isArray(data)) {
+        mergeGoals(data.map(translateIncomingGoal).filter((g) => g.person !== SKIP_MEMBER));
+      }
       break;
-
+    case "goal_delete":
+      if (data?.id && state.goals.some((g) => g.id === data.id)) {
+        state.goals = state.goals.filter((g) => g.id !== data.id);
+        saveGoals(false);
+        if (goalDetailId === data.id) closeGoalDetailModal();
+        requestRender();
+      }
+      break;
     case "full_sync":
-      const swappedList = payload.data.map(swapTransactionOwnership);
-      mergeTransactions(swappedList);
+      if (Array.isArray(data)) {
+        mergeTransactions(
+          data.map(translateIncomingTransaction).filter((t) => t.person !== SKIP_MEMBER)
+        );
+      }
       break;
-
     case "transaction_update":
-      const swappedTransaction = swapTransactionOwnership(payload.data);
-      mergeSingleTransaction(swappedTransaction);
+      if (data && data.id) {
+        const t = translateIncomingTransaction(data);
+        if (t.person !== SKIP_MEMBER) mergeSingleTransaction(t);
+      }
       break;
-
     case "transaction_delete":
-      deleteLocalTransaction(payload.data.id, false);
+      if (data?.id) deleteLocalTransaction(data.id, false);
       break;
   }
 }
 
-function mergeTransactions(incomingList) {
+// Mescla por ID (o item recebido substitui o local de mesmo ID). Usa Map
+// para não ficar O(n²) com muitos lançamentos.
+function mergeTransactions(incomingList, { silent = false } = {}) {
+  const index = new Map(state.transactions.map((t, i) => [t.id, i]));
+  let added = 0;
   let changed = false;
   incomingList.forEach((t) => {
-    const exists = state.transactions.find((local) => local.id === t.id);
-    if (!exists) {
+    if (!t || !t.id) return;
+    const idx = index.get(t.id);
+    if (idx === undefined) {
+      index.set(t.id, state.transactions.length);
       state.transactions.push(t);
+      added++;
       changed = true;
-    } else {
-      if (JSON.stringify(exists) !== JSON.stringify(t)) {
-        Object.assign(exists, t);
-        changed = true;
-      }
+    } else if (JSON.stringify(state.transactions[idx]) !== JSON.stringify(t)) {
+      state.transactions[idx] = t;
+      changed = true;
     }
   });
 
   if (changed) {
     saveData(false);
-    render();
-    showToast("Dados sincronizados", "success");
+    if (!silent) {
+      requestRender();
+      showToast("Dados sincronizados", "success");
+    }
   }
+  return added;
 }
 
 function mergeSingleTransaction(t) {
@@ -1652,8 +3156,8 @@ function mergeSingleTransaction(t) {
     state.transactions.push(t);
   }
   saveData(false);
-  render();
-  showToast("Nova transação recebida");
+  requestRender();
+  showToast("Lançamento sincronizado");
 }
 
 function updateConnectionStatus(status) {
@@ -1685,13 +3189,14 @@ function formatDateForInput(date) {
 }
 
 function saveData(broadcast = true) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.transactions));
+  invalidateDataCache();
+  secureStorage.setItem(STORAGE_KEY, JSON.stringify(state.transactions));
   if (broadcast && conn && conn.open) {
   }
 }
 
 function loadData() {
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = secureStorage.getItem(STORAGE_KEY);
   if (stored) {
     try {
       state.transactions = JSON.parse(stored);
@@ -1703,24 +3208,48 @@ function loadData() {
   }
 }
 
-function exportData() {
-  const payload = {
-    version: 2,
-    exportedAt: new Date().toISOString(),
-    transactions: state.transactions,
-    categories: customCategories,
-    goals: state.goals,
-  };
-  const dataStr = JSON.stringify(payload, null, 2);
-  const blob = new Blob([dataStr], { type: "application/json" });
+// O backup é sempre cifrado. O PIN é pedido novamente (e conferido contra o
+// cofre) para evitar gerar um arquivo com um PIN digitado errado.
+async function exportData() {
+  let encrypted = null;
+  const pin = await askPin({
+    title: "Exportar backup cifrado",
+    message:
+      "Confirme seu PIN atual. Ele passa a ser o PIN DO ARQUIVO: mesmo que você troque o PIN do app depois, este backup continuará abrindo apenas com o PIN de hoje.",
+    confirmLabel: "Exportar",
+    validate: async (value) => {
+      if (!(await secureStorage.verifyPin(value))) return "PIN incorreto.";
+      const payload = {
+        version: 3,
+        exportedAt: new Date().toISOString(),
+        members: getMembers(),
+        transactions: state.transactions,
+        categories: customCategories,
+        goals: state.goals,
+      };
+      try {
+        encrypted = await encryptBackup(value, JSON.stringify(payload));
+      } catch (e) {
+        console.error(e);
+        return "Não foi possível criptografar o backup.";
+      }
+      return null;
+    },
+  });
+  if (!pin || !encrypted) return;
+
+  const blob = new Blob([JSON.stringify(encrypted)], {
+    type: "application/json",
+  });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `backup_financas_${new Date()
+  link.download = `backup_financas_cifrado_${new Date()
     .toISOString()
     .slice(0, 10)}.json`;
   link.click();
-  showToast("Backup baixado com sucesso!", "success");
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("Backup baixado. Para abri-lo, use o PIN de hoje.", "success");
 }
 
 function triggerImport() {
@@ -1729,105 +3258,60 @@ function triggerImport() {
 
 function importData(event) {
   const file = event.target.files[0];
+  event.target.value = "";
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
+    let data;
     try {
-      const data = JSON.parse(e.target.result);
-      let transactions = null;
-      let categories = {};
-      let goals = [];
-
-      if (Array.isArray(data)) {
-        transactions = data;
-      } else if (data && Array.isArray(data.transactions)) {
-        transactions = data.transactions;
-        categories = data.categories || {};
-        goals = Array.isArray(data.goals) ? data.goals : [];
-      }
-
-      if (transactions) {
-        pendingImportData = transactions;
-        pendingImportCategories = categories;
-        pendingImportGoals = goals;
-        document.getElementById("importStep1").style.display = "block";
-        document.getElementById("importStep2").style.display = "none";
-        document.getElementById("importOptionsModal").classList.add("active");
-      } else {
-        showToast("Formato inválido", "error");
-      }
+      data = JSON.parse(e.target.result);
     } catch (error) {
       showToast("Erro ao processar", "error");
+      return;
     }
-    event.target.value = "";
+
+    // Backups cifrados: pede o PIN usado na exportação (pode ser o PIN de
+    // outro integrante, quando o arquivo veio do dispositivo dele).
+    const exportedAtOuter = data && data.exportedAt;
+    if (isEncryptedBackup(data)) {
+      let decrypted = null;
+      const exportedAt = Date.parse(data.exportedAt);
+      const when = Number.isNaN(exportedAt)
+        ? ""
+        : ` em ${new Date(exportedAt).toLocaleDateString("pt-BR")}`;
+      const pin = await askPin({
+        title: "PIN do arquivo",
+        message: `Este backup foi exportado${when}. Informe o PIN que estava em uso naquele dia — se você trocou o PIN do app depois disso, use o PIN antigo. Se o arquivo veio de outro integrante, use o PIN dele.`,
+        confirmLabel: "Abrir",
+        validate: async (value) => {
+          try {
+            decrypted = await decryptBackup(value, data);
+            return null;
+          } catch (err) {
+            return "PIN incorreto ou arquivo corrompido.";
+          }
+        },
+      });
+      if (!pin || decrypted === null) return;
+      try {
+        data = JSON.parse(decrypted);
+      } catch (error) {
+        showToast("Erro ao processar", "error");
+        return;
+      }
+    }
+
+    if (!data || (typeof data !== "object")) {
+      showToast("Formato inválido", "error");
+      return;
+    }
+    if (!Array.isArray(data) && !Array.isArray(data.transactions)) {
+      showToast("Formato inválido", "error");
+      return;
+    }
+    showDataOffer(data, { source: "file", exportedAt: data.exportedAt || exportedAtOuter });
   };
   reader.readAsText(file);
-}
-
-function selectImportPerson(asPartner) {
-  tempImportAsPartner = asPartner;
-  document.getElementById("importStep1").style.display = "none";
-  document.getElementById("importStep2").style.display = "block";
-}
-
-function executeImport(action) {
-  if (!pendingImportData) return;
-
-  let finalData = pendingImportData;
-  if (tempImportAsPartner) {
-    finalData = pendingImportData.map(swapTransactionOwnership);
-  }
-
-  if (action === "replace") {
-    state.transactions = finalData;
-    showToast("Dados substituídos com sucesso!", "success");
-  } else if (action === "merge") {
-    const existingIds = new Set(state.transactions.map((t) => t.id));
-    const newItems = finalData.filter((t) => !existingIds.has(t.id));
-    state.transactions = [...state.transactions, ...newItems];
-    showToast(
-      `${newItems.length} novos itens adicionados.`,
-      newItems.length > 0 ? "success" : "warning"
-    );
-  }
-
-  if (pendingImportCategories && Object.keys(pendingImportCategories).length) {
-    let addedCategories = 0;
-    Object.entries(pendingImportCategories).forEach(([key, cat]) => {
-      if (!customCategories[key] && !DEFAULT_CATEGORIES[key]) {
-        customCategories[key] = cat;
-        addedCategories++;
-      }
-    });
-    if (addedCategories > 0) {
-      saveCustomCategories(false);
-      setupFilters();
-    }
-  }
-
-  if (pendingImportGoals && pendingImportGoals.length) {
-    const existingGoalIds = new Set(state.goals.map((g) => g.id));
-    const newGoals = pendingImportGoals.filter((g) => !existingGoalIds.has(g.id));
-    if (newGoals.length > 0) {
-      state.goals = [...state.goals, ...newGoals];
-      saveGoals(false);
-    }
-  }
-
-  saveData();
-  render();
-
-  if (conn && conn.open) {
-    sendData({ type: "full_sync", data: state.transactions });
-    sendData({ type: "categories_sync", data: customCategories });
-    sendData({ type: "goals_sync", data: state.goals });
-  }
-
-  document.getElementById("importOptionsModal").classList.remove("active");
-  pendingImportData = null;
-  pendingImportCategories = null;
-  pendingImportGoals = null;
-  tempImportAsPartner = false;
 }
 
 function saveTheme() {
@@ -1863,27 +3347,25 @@ function toggleThemeWithLoader() {
 
   loader.classList.add("active");
 
-  setTimeout(() => {
-    state.theme = nextTheme;
-    applyTheme();
-    saveTheme();
-    if (state.userProfile.name) render();
-
-    setTimeout(() => loader.classList.remove("active"), 260);
-  }, 260);
+  // Dois quadros: o loader aparece, troca o tema e redesenha os gráficos.
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      state.theme = nextTheme;
+      applyTheme();
+      saveTheme();
+      if (state.userProfile.name) render();
+      requestAnimationFrame(() => loader.classList.remove("active"));
+    })
+  );
 }
 
 function getFilteredTransactions() {
-  return state.transactions.filter((t) => {
-    const date = new Date(t.date + "T00:00:00");
-    return (
-      date.getMonth() === state.filters.month &&
-      date.getFullYear() === state.filters.year &&
-      (state.filters.category === "all" ||
-        t.category === state.filters.category) &&
-      (state.filters.person === "all" || t.person === state.filters.person)
-    );
-  });
+  const { month, year, category, person } = state.filters;
+  return getMonthBucket(year, month).list.filter(
+    (t) =>
+      (category === "all" || t.category === category) &&
+      (person === "all" || t.person === person)
+  );
 }
 
 function calculateSummary(filtered) {
@@ -1903,7 +3385,112 @@ function calculateSummary(filtered) {
   };
 }
 
+// ── DESEMPENHO ──
+// Índice por mês ("AAAA-MM" -> lançamentos e totais), construído em UMA
+// passada e reaproveitado por filtros, timeline, previsão e conquistas.
+// É invalidado a cada render() e a cada saveData(): nunca fica desatualizado.
+const dataCache = { months: null, series: null };
+
+function invalidateDataCache() {
+  dataCache.months = null;
+  dataCache.series = null;
+}
+
+function getMonthBuckets() {
+  if (dataCache.months) return dataCache.months;
+  const months = new Map();
+  for (const t of state.transactions) {
+    if (!t || typeof t.date !== "string") continue;
+    const key = t.date.slice(0, 7);
+    let b = months.get(key);
+    if (!b) {
+      b = { list: [], income: 0, expense: 0 };
+      months.set(key, b);
+    }
+    b.list.push(t);
+    if (t.type === "income") b.income += t.amount;
+    else if (t.type === "expense") b.expense += t.amount;
+  }
+  dataCache.months = months;
+  return months;
+}
+
+const EMPTY_BUCKET = Object.freeze({ list: [], income: 0, expense: 0 });
+
+function getMonthBucket(year, month) {
+  const key = `${year}-${String(month + 1).padStart(2, "0")}`;
+  return getMonthBuckets().get(key) || EMPTY_BUCKET;
+}
+
+// Só a aba visível é desenhada; as outras ficam marcadas e são desenhadas
+// ao serem abertas (a troca de aba continua instantânea).
+let activeView = "dashboard";
+const dirtyViews = new Set();
+
+// Agrupa vários pedidos de render (ex.: rajada de mensagens da
+// sincronização) em um único desenho no próximo quadro.
+let renderScheduled = false;
+function requestRender() {
+  if (renderScheduled) return;
+  renderScheduled = true;
+  requestAnimationFrame(() => {
+    renderScheduled = false;
+    render();
+  });
+}
+
+function renderView(view, filtered, summary) {
+  if (view === "dashboard") {
+    renderCharts(filtered, summary);
+    renderInsights(filtered, summary);
+    renderHealthBars(summary);
+    renderTimeline();
+    renderForecast();
+  } else if (view === "goals") {
+    renderGoals();
+    renderAchievements();
+  } else if (view === "management") {
+    renderTransactions(filtered);
+  }
+  dirtyViews.delete(view);
+}
+
+function showView(view) {
+  activeView = view;
+  if (dirtyViews.has(view)) {
+    const filtered = getFilteredTransactions();
+    renderView(view, filtered, calculateSummary(filtered));
+  }
+}
+
+// ── Limpar filtros: volta ao padrão (mês/ano atuais, tudo selecionado) ──
+function getDefaultFilters() {
+  const now = new Date();
+  return { month: now.getMonth(), year: now.getFullYear(), category: "all", person: "all" };
+}
+
+function updateClearFiltersButton() {
+  const btn = document.getElementById("btnClearFilters");
+  if (!btn) return;
+  const def = getDefaultFilters();
+  btn.disabled = Object.keys(def).every((k) => state.filters[k] === def[k]);
+}
+
+function clearFilters() {
+  state.filters = getDefaultFilters();
+  populateYearFilter();
+  document.getElementById("filterMonth").value = String(state.filters.month);
+  document.getElementById("filterYear").value = String(state.filters.year);
+  document.getElementById("filterCategory").value = "all";
+  document.getElementById("filterPerson").value = "all";
+  render();
+  showToast("Filtros limpos");
+}
+
 function render() {
+  invalidateDataCache();
+  populateYearFilter();
+  updateClearFiltersButton();
   const filtered = getFilteredTransactions();
   const summary = calculateSummary(filtered);
 
@@ -1925,18 +3512,225 @@ function render() {
       ? "var(--warning)"
       : "var(--danger)";
 
-  renderTransactions(filtered);
-  renderCharts(filtered, summary);
-  renderInsights(filtered, summary);
-  renderHealthBars(summary);
-  renderTimeline();
-  renderGoals();
-  renderAchievements();
+  ["dashboard", "goals", "management"].forEach((v) => dirtyViews.add(v));
+  renderView(activeView, filtered, summary);
+}
+
+// ── TRANSAÇÕES FIXAS: PROJEÇÃO DOS PRÓXIMOS MESES ──
+// Fixos NÃO são lançados sozinhos: a cada mês após o último lançamento de
+// uma série, aparece um item "previsto" que o usuário confirma com um clique.
+// Previstos não entram nos totais reais, apenas na visão "Próximos meses".
+function recurringSeriesKey(t) {
+  return `${t.person}-${t.type}-${String(t.description).trim().toLowerCase()}`;
+}
+
+function monthIndex(dateStr) {
+  const [y, m] = dateStr.split("-").map(Number);
+  return y * 12 + (m - 1);
+}
+
+// Último lançamento de cada série; a série só segue ativa se esse último
+// ainda estiver marcado como fixo (desmarcar encerra a recorrência).
+function getActiveRecurringSeries() {
+  if (dataCache.series) return dataCache.series;
+  const latest = new Map();
+  state.transactions.forEach((t) => {
+    if (!t.date || !t.description) return;
+    const key = recurringSeriesKey(t);
+    const current = latest.get(key);
+    if (!current || t.date > current.date) latest.set(key, t);
+  });
+  dataCache.series = [...latest.values()].filter((t) => t.isRecurring);
+  return dataCache.series;
+}
+
+function getProjectedForMonth(year, month) {
+  const target = year * 12 + month;
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const ym = `${year}${String(month + 1).padStart(2, "0")}`;
+  return getActiveRecurringSeries()
+    .filter((t) => target > monthIndex(t.date))
+    .map((t) => {
+      const day = Math.min(Number(t.date.slice(8, 10)) || 1, lastDay);
+      const root = t.recurringRoot || t.id;
+      return {
+        ...t,
+        // ID determinístico: se os dois aparelhos confirmarem o mesmo
+        // previsto, a sincronização não duplica o lançamento.
+        id: `rec_${root}_${ym}`,
+        recurringRoot: root,
+        date: `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+        isProjected: true,
+      };
+    });
+}
+
+function getFilteredProjected() {
+  return getProjectedForMonth(state.filters.year, state.filters.month).filter(
+    (t) =>
+      (state.filters.category === "all" || t.category === state.filters.category) &&
+      (state.filters.person === "all" || t.person === state.filters.person)
+  );
+}
+
+function confirmProjected(ids) {
+  const wanted = new Set(Array.isArray(ids) ? ids : [ids]);
+  const items = getFilteredProjected().filter((t) => wanted.has(t.id));
+  if (!items.length) return;
+  items.forEach((p) => {
+    const { isProjected, ...transaction } = p;
+    if (state.transactions.some((t) => t.id === transaction.id)) return;
+    state.transactions.push(transaction);
+    sendData({ type: "transaction_update", data: transaction });
+  });
+  saveData();
+  render();
+  showToast(
+    items.length > 1 ? `${items.length} lançamentos confirmados` : "Lançamento confirmado"
+  );
+}
+
+function confirmAllProjected() {
+  confirmProjected(getFilteredProjected().map((t) => t.id));
+}
+
+// Visão estilo "fatura": mês atual + próximos meses com o saldo previsto.
+let forecastMonths = 6;
+let forecastSelected = 0;
+
+function buildForecast() {
+  const now = new Date();
+  const personOk = (t) =>
+    state.filters.person === "all" || t.person === state.filters.person;
+  const months = [];
+  for (let i = 0; i < forecastMonths; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const real = getMonthBucket(y, m).list.filter(personOk);
+    const projected = getProjectedForMonth(y, m).filter(personOk);
+    const items = [...real, ...projected].sort((a, b) =>
+      a.date.localeCompare(b.date)
+    );
+    const sum = (type) =>
+      items.filter((t) => t.type === type).reduce((s, t) => s + t.amount, 0);
+    const income = sum("income");
+    const expense = sum("expense");
+    months.push({
+      year: y,
+      month: m,
+      label: `${MONTHS[m].slice(0, 3)}${y !== now.getFullYear() ? " " + String(y).slice(2) : ""}`,
+      items,
+      income,
+      expense,
+      balance: income - expense,
+      projectedCount: projected.length,
+    });
+  }
+  return months;
+}
+
+function renderForecast() {
+  const chips = document.getElementById("forecastChips");
+  const detail = document.getElementById("forecastDetail");
+  if (!chips || !detail) return;
+  const months = buildForecast();
+  if (forecastSelected >= months.length) forecastSelected = 0;
+
+  chips.innerHTML = months
+    .map(
+      (m, i) => `
+      <button type="button" class="forecast-chip ${i === forecastSelected ? "active" : ""}"
+        data-index="${i}" aria-pressed="${i === forecastSelected}">
+        <span class="forecast-chip-month">${i === 0 ? "Este mês" : escapeHtml(m.label)}</span>
+        <span class="forecast-chip-value ${m.balance >= 0 ? "income" : "expense"}">${formatCurrency(m.balance)}</span>
+      </button>`
+    )
+    .join("");
+
+  const sel = months[forecastSelected];
+  const rows = sel.items.length
+    ? sel.items
+        .map((t) => {
+          const cat = CATEGORIES[t.category] || { label: t.category, icon: "bi-tag" };
+          const badge = t.isProjected
+            ? '<span class="forecast-badge projected">Previsto</span>'
+            : t.isRecurring
+            ? '<span class="forecast-badge fixed">Fixo</span>'
+            : '<span class="forecast-badge scheduled">Lançado</span>';
+          return `
+          <div class="forecast-row ${t.isProjected ? "is-projected" : ""}">
+            <span class="forecast-row-day">${t.date.slice(8, 10)}</span>
+            <i class="bi ${escapeHtml(cat.icon)} forecast-row-icon"></i>
+            <span class="forecast-row-desc">${escapeHtml(t.description)}</span>
+            ${badge}
+            <span class="forecast-row-val ${t.type === "income" ? "income" : "expense"}">
+              ${t.type === "income" ? "+" : "-"} ${formatCurrency(t.amount)}
+            </span>
+          </div>`;
+        })
+        .join("")
+    : '<div class="forecast-empty">Nada previsto para este mês.</div>';
+
+  detail.innerHTML = `
+    <div class="forecast-totals">
+      <div><span>Receitas</span><strong class="income">${formatCurrency(sel.income)}</strong></div>
+      <div><span>Despesas</span><strong class="expense">${formatCurrency(sel.expense)}</strong></div>
+      <div><span>Saldo previsto</span><strong class="${sel.balance >= 0 ? "income" : "expense"}">${formatCurrency(sel.balance)}</strong></div>
+    </div>
+    <div class="forecast-list">${rows}</div>`;
 }
 
 function renderTransactions(list) {
   const container = document.getElementById("transactionsList");
+  const projected = getFilteredProjected();
+  const projectedHtml = projected.length
+    ? `
+    <div class="projected-group">
+      <div class="projected-group-header">
+        <span><i class="bi bi-calendar-event"></i> Fixos previstos para este mês (${projected.length})</span>
+        <button type="button" class="btn btn-sm btn-outline" onclick="confirmAllProjected()">
+          Lançar todos
+        </button>
+      </div>
+      ${projected
+        .map((t) => {
+          const cat = CATEGORIES[t.category] || { label: t.category, icon: "bi-tag" };
+          const typeClass = t.type === "income" ? "income" : "expense";
+          return `
+          <div class="transaction-item is-projected">
+            <div class="transaction-left">
+              <div class="t-icon-box ${typeClass}"><i class="bi ${escapeHtml(cat.icon)}"></i></div>
+              <div class="t-details">
+                <h4>${escapeHtml(t.description)}</h4>
+                <div class="t-meta">
+                  <span>${escapeHtml(cat.label)}</span>
+                  <span class="t-dot"></span>
+                  <span>${escapeHtml(getPersonLabel(t.person))}</span>
+                  <span class="t-dot"></span>
+                  <span>${escapeHtml(formatDate(t.date))}</span>
+                </div>
+              </div>
+            </div>
+            <div class="transaction-right">
+              <span class="t-amount ${typeClass}">
+                ${t.type === "income" ? "+" : "-"} ${formatCurrency(t.amount)}
+              </span>
+              <button type="button" class="btn btn-sm btn-primary" onclick="confirmProjected('${safeJsArg(t.id)}')">
+                Lançar
+              </button>
+            </div>
+          </div>`;
+        })
+        .join("")}
+    </div>`
+    : "";
+
   if (list.length === 0) {
+    if (projectedHtml) {
+      container.innerHTML = projectedHtml;
+      return;
+    }
     container.innerHTML = `<div style="text-align:center; padding: 2rem; color: var(--text-secondary);">
       <i class="bi bi-inbox" style="font-size: 2rem;"></i><br>Nenhum registro.
     </div>`;
@@ -1951,31 +3745,32 @@ function renderTransactions(list) {
     return b.id.localeCompare(a.id);
   });
 
-  container.innerHTML = sorted
+  container.innerHTML = projectedHtml + sorted
     .map((t) => {
       const catData = CATEGORIES[t.category] || {
         label: t.category,
         icon: "bi-tag",
       };
-      const personLabel = PERSONS[t.person] || t.person;
+      const personLabel = getPersonLabel(t.person);
+      const typeClass = t.type === "income" ? "income" : "expense";
 
       return `
       <div class="transaction-item">
         <div class="transaction-left">
-          <div class="t-icon-box ${t.type}">
-            <i class="bi ${catData.icon}"></i>
+          <div class="t-icon-box ${typeClass}">
+            <i class="bi ${escapeHtml(catData.icon)}"></i>
           </div>
           <div class="t-details">
-            <h4>${t.description}</h4>
+            <h4>${escapeHtml(t.description)}</h4>
             <div class="t-meta">
-              <span class="cat-dot" style="background:${
+              <span class="cat-dot" style="background:${escapeHtml(
                 catData.color || "#6b7280"
-              }"></span>
-              <span>${catData.label}</span>
+              )}"></span>
+              <span>${escapeHtml(catData.label)}</span>
               <span class="t-dot"></span>
-              <span>${personLabel}</span>
+              <span>${escapeHtml(personLabel)}</span>
               <span class="t-dot"></span>
-              <span>${formatDate(t.date)}</span>
+              <span>${escapeHtml(formatDate(t.date))}</span>
               ${
                 t.isRecurring
                   ? '<i class="bi bi-arrow-repeat" title="Recorrente"></i>'
@@ -1985,16 +3780,16 @@ function renderTransactions(list) {
           </div>
         </div>
         <div class="transaction-right">
-          <span class="t-amount ${t.type}">
+          <span class="t-amount ${typeClass}">
             ${t.type === "income" ? "+" : "-"} ${formatCurrency(t.amount)}
           </span>
           <div class="t-actions">
-            <button class="btn-icon-sm" onclick="editTransaction('${
+            <button class="btn-icon-sm" onclick="editTransaction('${safeJsArg(
               t.id
-            }')"><i class="bi bi-pencil"></i></button>
-            <button class="btn-icon-sm delete" onclick="confirmDelete('${
+            )}')"><i class="bi bi-pencil"></i></button>
+            <button class="btn-icon-sm delete" onclick="confirmDelete('${safeJsArg(
               t.id
-            }')"><i class="bi bi-trash"></i></button>
+            )}')"><i class="bi bi-trash"></i></button>
           </div>
         </div>
       </div>
@@ -2048,7 +3843,9 @@ function generateCategoryListHTML(transactions, type) {
     .map(
       ([cat, val]) => `
         <div class="mini-list-item">
-            <span>${CATEGORIES[cat] ? CATEGORIES[cat].label : cat}</span>
+            <span>${escapeHtml(
+              CATEGORIES[cat] ? CATEGORIES[cat].label : cat
+            )}</span>
             <span class="mini-val ${type}">${formatCurrency(val)}</span>
         </div>
     `
@@ -2096,7 +3893,8 @@ function renderPersonSpecificTab(containerId, personKey, list) {
         </div>
     `;
 
-  document.getElementById(containerId).innerHTML = html;
+  const container = document.getElementById(containerId);
+  if (container) container.innerHTML = html;
 }
 
 function renderCharts(list, summary) {
@@ -2120,13 +3918,17 @@ function renderCharts(list, summary) {
     .filter((t) => t.type === "expense")
     .forEach((t) => (people[t.person] = (people[t.person] || 0) + t.amount));
 
+  // Cada integrante tem cor fixa (a mesma do avatar na Gerência).
+  const personMap = {};
+  Object.keys(people).forEach((k) => {
+    personMap[k] = { label: getPersonLabel(k), color: getMemberColor(k) };
+  });
   renderPieChart(
     "personChart",
     "personLegend",
     people,
-    PERSONS,
-    PALETTE_PERSONS,
-    true
+    personMap,
+    PALETTE_PERSONS
   );
 
   // 3. Gráfico de Barras (Fluxo)
@@ -2143,30 +3945,13 @@ function renderCharts(list, summary) {
 
   // Lógica de Previsão CORRIGIDA:
   // Filtra recorrentes, mas remove duplicatas (histórico) mantendo apenas o registro mais recente de cada despesa/receita.
-  const uniqueRecurringMap = new Map();
-
-  // Ordena por data (mais recente primeiro) para garantir o valor atualizado
-  const sortedTransactions = [...state.transactions].sort(
-    (a, b) => new Date(b.date) - new Date(a.date)
-  );
-
-  sortedTransactions.forEach((t) => {
-    if (t.isRecurring) {
-      // Chave única: Pessoa + Tipo + Descrição (normalizada)
-      // Isso evita somar "Salário" de Nov e "Salário" de Dez juntos
-      const key = `${t.person}-${t.type}-${t.description.trim().toLowerCase()}`;
-
-      if (!uniqueRecurringMap.has(key)) {
-        uniqueRecurringMap.set(key, t);
-      }
-    }
-  });
-
-  const uniqueRecurringList = Array.from(uniqueRecurringMap.values());
+  // Mesma regra da projeção: o último lançamento de cada série (pessoa +
+  // tipo + descrição), apenas se ainda estiver marcado como fixo.
+  const uniqueRecurringList = getActiveRecurringSeries();
 
   const calcRecurring = (personKey) => {
     const pList = uniqueRecurringList.filter(
-      (t) => personKey === "ambos" || t.person === personKey
+      (t) => t.person === personKey
     );
     const inc = pList
       .filter((t) => t.type === "income")
@@ -2177,8 +3962,38 @@ function renderCharts(list, summary) {
     return { inc, exp, bal: inc - exp };
   };
 
-  const nextEu = calcRecurring("eu");
-  const nextParceiro = calcRecurring("parceiro");
+  const members = getMembers();
+
+  const memberForecastHtml = members
+    .map((m) => {
+      const next = calcRecurring(m.key);
+      return `
+        <div class="indicator-box highlight">
+            <h6>${escapeHtml(m.name)}</h6>
+            <div class="indicator-row">
+                <span>Fixos (+):</span>
+                <span class="indicator-mini-val text-inc">${formatCurrency(
+                  next.inc
+                )}</span>
+            </div>
+            <div class="indicator-row">
+                <span>Fixos (-):</span>
+                <span class="indicator-mini-val text-exp">${formatCurrency(
+                  next.exp
+                )}</span>
+            </div>
+            <hr style="margin: 5px 0; border-color: var(--border)">
+            <div class="indicator-row">
+                <span>Sobra:</span>
+                <span class="indicator-mini-val" style="color: ${
+                  next.bal >= 0 ? "var(--text-primary)" : "var(--danger)"
+                }">
+                    ${formatCurrency(next.bal)}
+                </span>
+            </div>
+        </div>`;
+    })
+    .join("");
 
   // HTML atualizado dos Indicadores
   document.getElementById("fluxoIndicators").innerHTML = `
@@ -2206,62 +4021,13 @@ function renderCharts(list, summary) {
     </div>
 
     <div class="indicator-group">
-        <div class="indicator-box highlight">
-            <h6>${PERSONS.eu}</h6>
-            <div class="indicator-row">
-                <span>Fixos (+):</span>
-                <span class="indicator-mini-val text-inc">${formatCurrency(
-                  nextEu.inc
-                )}</span>
-            </div>
-            <div class="indicator-row">
-                <span>Fixos (-):</span>
-                <span class="indicator-mini-val text-exp">${formatCurrency(
-                  nextEu.exp
-                )}</span>
-            </div>
-            <hr style="margin: 5px 0; border-color: var(--border)">
-             <div class="indicator-row">
-                <span>Sobra:</span>
-                <span class="indicator-mini-val" style="color: ${
-                  nextEu.bal >= 0 ? "var(--text-primary)" : "var(--danger)"
-                }">
-                    ${formatCurrency(nextEu.bal)}
-                </span>
-            </div>
-        </div>
-
-        <div class="indicator-box highlight">
-            <h6>${PERSONS.parceiro}</h6>
-            <div class="indicator-row">
-                <span>Fixos (+):</span>
-                <span class="indicator-mini-val text-inc">${formatCurrency(
-                  nextParceiro.inc
-                )}</span>
-            </div>
-            <div class="indicator-row">
-                <span>Fixos (-):</span>
-                <span class="indicator-mini-val text-exp">${formatCurrency(
-                  nextParceiro.exp
-                )}</span>
-            </div>
-             <hr style="margin: 5px 0; border-color: var(--border)">
-             <div class="indicator-row">
-                <span>Sobra:</span>
-                <span class="indicator-mini-val" style="color: ${
-                  nextParceiro.bal >= 0
-                    ? "var(--text-primary)"
-                    : "var(--danger)"
-                }">
-                    ${formatCurrency(nextParceiro.bal)}
-                </span>
-            </div>
-        </div>
+        ${memberForecastHtml}
     </div>
   `;
 
-  renderPersonSpecificTab("detailEu", "eu", list);
-  renderPersonSpecificTab("detailParceiro", "parceiro", list);
+  members.forEach((m) =>
+    renderPersonSpecificTab(`detail-${m.key}`, m.key, list)
+  );
 }
 
 function renderPieChart(
@@ -2297,12 +4063,14 @@ function renderPieChart(
         const offset = -(cumulative / 100) * (2 * Math.PI * 40);
         cumulative += pct;
 
-        let label = isSimpleMap ? mapping[key] : mapping[key].label;
+        let label = isSimpleMap ? mapping[key] : mapping[key]?.label;
         if (!label) label = key;
 
-        return `<circle cx="50" cy="50" r="40" fill="none" stroke="${color}" stroke-width="20" 
+        return `<circle cx="50" cy="50" r="40" fill="none" stroke="${escapeHtml(
+          color
+        )}" stroke-width="20" 
               stroke-dasharray="${dash} ${gap}" stroke-dashoffset="${offset}" class="donut-segment">
-              <title>${label}: ${formatCurrency(val)}</title></circle>`;
+              <title>${escapeHtml(label)}: ${formatCurrency(val)}</title></circle>`;
       })
       .join("")}
   </svg>`;
@@ -2311,12 +4079,14 @@ function renderPieChart(
   if (legend) {
     legend.innerHTML = entries
       .map(([key, val], i) => {
-        let label = isSimpleMap ? mapping[key] : mapping[key].label;
+        let label = isSimpleMap ? mapping[key] : mapping[key]?.label;
         if (!label) label = key;
 
         const color =
           (!isSimpleMap && mapping[key]?.color) || palette[i % palette.length];
-        return `<div class="legend-item"><span class="legend-color" style="background:${color}"></span>${label} (${Math.round(
+        return `<div class="legend-item"><span class="legend-color" style="background:${escapeHtml(
+          color
+        )}"></span>${escapeHtml(label)} (${Math.round(
           (val / total) * 100
         )}%)</div>`;
       })
@@ -2367,7 +4137,7 @@ function renderInsights(list, summary) {
     .forEach((t) => (cats[t.category] = (cats[t.category] || 0) + t.amount));
   const topCat = Object.entries(cats).sort((a, b) => b[1] - a[1])[0];
   if (topCat && summary.expense > 0) {
-    const catLabel = CATEGORIES[topCat[0]]?.label || topCat[0];
+    const catLabel = escapeHtml(CATEGORIES[topCat[0]]?.label || topCat[0]);
     insights.push({
       icon: "info",
       text: `Sua maior categoria de gasto é <strong>${catLabel}</strong>, com ${formatCurrency(
@@ -2494,23 +4264,19 @@ function renderTimeline() {
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
 
-  const now = new Date();
+  // Termina no mês selecionado no filtro (permite ver históricos antigos).
+  const now = new Date(state.filters.year, state.filters.month, 1);
   const pts = [];
   for (let i = timelineMonths - 1; i >= 0; i--) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const m = d.getMonth(),
       y = d.getFullYear();
-    const mList = state.transactions.filter((t) => {
-      const td = new Date(t.date + "T00:00:00");
-      return td.getMonth() === m && td.getFullYear() === y;
-    });
-    const inc = mList
-      .filter((t) => t.type === "income")
-      .reduce((s, t) => s + t.amount, 0);
-    const exp = mList
-      .filter((t) => t.type === "expense")
-      .reduce((s, t) => s + t.amount, 0);
-    pts.push({ label: MONTHS[m].slice(0, 3), inc, exp });
+    const { income: inc, expense: exp } = getMonthBucket(y, m);
+    const label =
+      y === state.filters.year
+        ? MONTHS[m].slice(0, 3)
+        : `${MONTHS[m].slice(0, 3)}/${String(y).slice(2)}`;
+    pts.push({ label, inc, exp });
   }
 
   canvas.style.minWidth = `${Math.max(timelineMonths * 60, 300)}px`;
@@ -2591,7 +4357,25 @@ function openModal(transaction = null) {
   const categoryKey = transaction?.category || "outros";
   document.getElementById("txCategory").value = categoryKey;
   selectCategoryTx(categoryKey);
-  document.getElementById("txPerson").value = transaction?.person || "eu";
+  // Lançamentos de um integrante que não existe neste dispositivo (ex.: vindo
+  // da sincronização) mantêm o responsável original ao serem editados.
+  const perSel = document.getElementById("txPerson");
+  // "Compartilhado" (formato antigo) precisa ser reatribuído a um integrante.
+  const isLegacyShared = transaction?.person === SHARED_PERSON_KEY;
+  const personKey = isLegacyShared ? "eu" : transaction?.person || "eu";
+  document.getElementById("txPersonHint").textContent = isLegacyShared
+    ? 'Este lançamento era "Compartilhado". Escolha o responsável.'
+    : "";
+  perSel.querySelectorAll("option[data-temp]").forEach((o) => o.remove());
+  if (![...perSel.options].some((o) => o.value === personKey)) {
+    perSel.insertAdjacentHTML(
+      "beforeend",
+      `<option value="${escapeHtml(personKey)}" data-temp="1">${escapeHtml(
+        getPersonLabel(personKey)
+      )}</option>`
+    );
+  }
+  perSel.value = personKey;
   document.getElementById("txRecurring").checked =
     transaction?.isRecurring || false;
   setType(transaction?.type || "expense");
@@ -2706,7 +4490,8 @@ function showToast(msg, type = "success") {
   toast.className = `toast ${type}`;
   toast.innerHTML = `<i class="bi ${
     type === "success" ? "bi-check-circle-fill" : "bi-exclamation-circle-fill"
-  }"></i> <span>${msg}</span>`;
+  }"></i> <span></span>`;
+  toast.querySelector("span").textContent = msg;
   container.appendChild(toast);
   setTimeout(() => toast.remove(), 3000);
 }
@@ -2717,12 +4502,14 @@ function renderCategoryPickerTx() {
   panel.innerHTML = Object.entries(CATEGORIES)
     .map(
       ([key, cat]) => `
-      <button type="button" class="category-picker-item" data-key="${key}">
-        <span class="category-picker-dot" style="background:${
+      <button type="button" class="category-picker-item" data-key="${escapeHtml(
+        key
+      )}">
+        <span class="category-picker-dot" style="background:${escapeHtml(
           cat.color || "#6b7280"
-        }"></span>
-        <i class="bi ${cat.icon}"></i>
-        <span>${cat.label}</span>
+        )}"></span>
+        <i class="bi ${escapeHtml(cat.icon)}"></i>
+        <span>${escapeHtml(cat.label)}</span>
       </button>`
     )
     .join("");
@@ -2752,6 +4539,25 @@ function selectCategoryTx(key) {
     );
 }
 
+// Anos do filtro: do lançamento mais antigo ao mais futuro (com margem),
+// para permitir consultar históricos antigos e lançamentos agendados.
+function populateYearFilter() {
+  const ySel = document.getElementById("filterYear");
+  const now = new Date().getFullYear();
+  const years = [...getMonthBuckets().keys()]
+    .map((k) => Number(k.slice(0, 4)))
+    .filter((y) => y >= 1990 && y <= 2100);
+  const min = Math.min(now - 2, state.filters.year, ...years);
+  const max = Math.max(now + 3, state.filters.year, ...years);
+  const key = `${min}-${max}`;
+  if (ySel.dataset.range === key) return;
+  ySel.dataset.range = key;
+  let html = "";
+  for (let y = min; y <= max; y++) html += `<option value="${y}">${y}</option>`;
+  ySel.innerHTML = html;
+  ySel.value = String(state.filters.year);
+}
+
 function setupFilters() {
   const catSel = document.getElementById("txCategory");
   const filterCat = document.getElementById("filterCategory");
@@ -2759,8 +4565,11 @@ function setupFilters() {
   filterCat.innerHTML = "";
 
   Object.entries(CATEGORIES).forEach(([k, v]) => {
-    catSel.innerHTML += `<option value="${k}">${v.label}</option>`;
-    filterCat.innerHTML += `<option value="${k}">${v.label}</option>`;
+    const option = `<option value="${escapeHtml(k)}">${escapeHtml(
+      v.label
+    )}</option>`;
+    catSel.innerHTML += option;
+    filterCat.innerHTML += option;
   });
   filterCat.insertAdjacentHTML(
     "afterbegin",
@@ -2777,26 +4586,31 @@ function setupFilters() {
   goalPer.innerHTML = "";
 
   Object.entries(PERSONS).forEach(([k, v]) => {
-    perSel.innerHTML += `<option value="${k}">${v}</option>`;
-    filterPer.innerHTML += `<option value="${k}">${v}</option>`;
-    goalPer.innerHTML += `<option value="${k}">${v}</option>`;
+    const option = `<option value="${escapeHtml(k)}">${escapeHtml(v)}</option>`;
+    perSel.innerHTML += option;
+    filterPer.innerHTML += option;
+    goalPer.innerHTML += option;
   });
   filterPer.insertAdjacentHTML(
     "afterbegin",
-    '<option value="all">Todas Pessoas</option>'
+    '<option value="all">Geral (todos)</option>'
   );
 
+  if (state.filters.person !== "all" && !PERSONS[state.filters.person]) {
+    state.filters.person = "all";
+  }
   filterCat.value = state.filters.category;
   filterPer.value = state.filters.person;
 }
 
 function init() {
-  loadTheme();
+  if (appInitialized) return;
+  appInitialized = true;
+
   loadCustomCategories();
   loadData();
   loadGoals();
   loadProfile();
-  initPeer();
 
   setupFilters();
 
@@ -2808,20 +4622,55 @@ function init() {
       }>${m}</option>`)
   );
 
-  const ySel = document.getElementById("filterYear");
-  for (let i = 2023; i <= 2030; i++)
-    ySel.innerHTML += `<option value="${i}" ${
-      i === state.filters.year ? "selected" : ""
-    }>${i}</option>`;
+  populateYearFilter();
 
   document.getElementById("btnFinishOnboarding").onclick = finishOnboarding;
+  document.getElementById("setupMemberCount").onchange =
+    renderOnboardingMemberFields;
+
+  document.getElementById("btnAddMember").onclick = addMember;
+  document.getElementById("newMemberName").onkeydown = (e) => {
+    if (e.key === "Enter") addMember();
+  };
   document.getElementById("btnImportMenu").onclick = triggerImport;
   document.getElementById("importFile").onchange = importData;
   document.getElementById("btnExportMenu").onclick = exportData;
 
   document.getElementById("btnSyncMenu").onclick = () => {
+    ensurePeer().catch(() => {});
+    renderConnectedPeer();
     document.getElementById("syncModal").classList.add("active");
   };
+  document.getElementById("btnDisconnectPeer").onclick = () => {
+    if (conn) conn.close();
+  };
+  document.getElementById("btnTermsMenu").onclick = (e) => {
+    e.preventDefault();
+    openTermsModal("read");
+  };
+
+  document.getElementById("forecastChips").onclick = (e) => {
+    const chip = e.target.closest(".forecast-chip");
+    if (!chip) return;
+    forecastSelected = Number(chip.dataset.index) || 0;
+    renderForecast();
+  };
+  document.getElementById("forecastPeriodSelect").onchange = (e) => {
+    forecastMonths = parseInt(e.target.value) || 6;
+    renderForecast();
+  };
+
+  // Sai do lobby ao fechar a aba: o nome não fica exposto sem necessidade.
+  window.addEventListener("pagehide", () => removeFromLobby());
+
+  // Esc fecha o modal aberto (exceto os que exigem uma decisão).
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const open = [...document.querySelectorAll(".modal-overlay.active")].pop();
+    if (!open || open.dataset.mode === "require") return;
+    const closeBtn = open.querySelector(".btn-close, [data-dismiss]");
+    if (closeBtn && closeBtn.offsetParent !== null) closeBtn.click();
+  });
   document.getElementById("btnCloseSyncX").onclick = () => {
     document.getElementById("syncModal").classList.remove("active");
   };
@@ -2832,10 +4681,18 @@ function init() {
     showToast("ID copiado!", "success");
   };
   document.getElementById("btnConnectPeer").onclick = () => connectToPeer();
-  document.getElementById("btnForceSync").onclick = () => {
-    sendData({ type: "full_sync", data: state.transactions });
-    showToast("Sincronização forçada enviada");
+  document.getElementById("btnForceSync").onclick = sendDataOffer;
+  document.getElementById("btnSyncStartSend").onclick = sendDataOffer;
+  document.getElementById("btnSyncStartLater").onclick = closeSyncStartModal;
+  document.getElementById("btnAcceptDataOffer").onclick = acceptDataOffer;
+  document.getElementById("btnDeclineDataOffer").onclick = declineDataOffer;
+  document.getElementById("btnAutoBackupMenu").onclick = (e) => {
+    e.preventDefault();
+    openAutoBackupModal();
   };
+  document.getElementById("btnCloseAutoBackup").onclick = () =>
+    document.getElementById("autoBackupModal").classList.remove("active");
+  document.getElementById("btnRestoreAutoBackup").onclick = restoreAutoBackup;
 
   document.getElementById("btnFindPartners").onclick = showUserListModal;
   document.getElementById("btnCloseUserList").onclick = hideUserListModal;
@@ -2879,21 +4736,15 @@ function init() {
         .forEach((sec) => sec.classList.remove("active"));
       const target = tab.getAttribute("data-tab");
       document.getElementById(tabViewMap[target]).classList.add("active");
+      showView(target);
     };
   });
 
-  const cardTabs = document.querySelectorAll(".card-tab-btn");
-  cardTabs.forEach((tab) => {
-    tab.onclick = () => {
-      cardTabs.forEach((t) => t.classList.remove("active"));
-      tab.classList.add("active");
-      document
-        .querySelectorAll(".tab-content-inner")
-        .forEach((c) => (c.style.display = "none"));
-      const targetId = tab.getAttribute("data-target");
-      document.getElementById(targetId).style.display = "block";
-    };
-  });
+  // As abas são recriadas quando os integrantes mudam: delegação de evento.
+  document.getElementById("flowTabs").onclick = (e) => {
+    const tab = e.target.closest(".card-tab-btn");
+    if (tab) showFlowTab(tab.dataset.target);
+  };
 
   document.getElementById("btnAddTransaction").onclick = () => openModal();
   document.getElementById("btnFabAdd").onclick = () => openModal();
@@ -2944,18 +4795,12 @@ function init() {
   document.getElementById("btnCancelClear").onclick = () =>
     document.getElementById("clearDataModal").classList.remove("active");
 
-  document.getElementById("btnCloseImportOptions").onclick = () => {
-    document.getElementById("importOptionsModal").classList.remove("active");
-    pendingImportData = null;
-    pendingImportCategories = null;
-    pendingImportGoals = null;
-    tempImportAsPartner = false;
-  };
-
-  document.getElementById("btnCategoriesMenu").onclick = openCategoryModal;
-  document.getElementById("btnCloseCategoryModal").onclick = () =>
-    document.getElementById("categoryModal").classList.remove("active");
   document.getElementById("btnAddCategory").onclick = addCustomCategory;
+  document.getElementById("newCategoryName").onkeydown = (e) => {
+    if (e.key === "Enter") addCustomCategory();
+  };
+  renderCategoriesSection();
+  setupCollapsibleSections();
 
   document.getElementById("categoryPickerTrigger").onclick = (e) => {
     e.stopPropagation();
@@ -2966,8 +4811,12 @@ function init() {
     if (picker && !picker.contains(e.target)) picker.classList.remove("open");
   });
 
+  let resizeTimer = null;
   window.addEventListener("resize", () => {
-    renderTimeline();
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      if (activeView === "dashboard") renderTimeline();
+    }, 150);
   });
 
   document.getElementById("timelinePeriodSelect").onchange = (e) => {
@@ -2975,15 +4824,7 @@ function init() {
     renderTimeline();
   };
 
-  document.getElementById("btnImportAsMe").onclick = () =>
-    selectImportPerson(false);
-  document.getElementById("btnImportAsPartner").onclick = () =>
-    selectImportPerson(true);
-
-  document.getElementById("btnActionMerge").onclick = () =>
-    executeImport("merge");
-  document.getElementById("btnActionReplace").onclick = () =>
-    executeImport("replace");
+  document.getElementById("btnClearFilters").onclick = clearFilters;
 
   ["filterMonth", "filterYear", "filterCategory", "filterPerson"].forEach(
     (id) => {
@@ -2998,6 +4839,8 @@ function init() {
     }
   );
 
+  renderMembersList();
+
   if (state.userProfile.name) {
     render();
   }
@@ -3009,17 +4852,11 @@ document.getElementById("btnDeleteAccountMenu").onclick = () => {
 
 document.getElementById("btnCancelDeleteAccount").onclick = () => {
   document.getElementById("deleteAccountModal").classList.remove("active");
+  // Quem recusou os termos e desistiu de excluir volta para o aceite.
+  if (state.userProfile.name && !getTermsAcceptance()) openTermsModal("require");
 };
 
-document.getElementById("btnConfirmDeleteAccount").onclick = () => {
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(PROFILE_KEY);
-  localStorage.removeItem(THEME_KEY);
-  localStorage.removeItem(CUSTOM_CATEGORIES_KEY);
-  localStorage.removeItem(GOALS_KEY);
-  localStorage.removeItem(HAS_SYNCED_KEY);
-  if (peer) peer.destroy();
-  location.reload();
-};
+document.getElementById("btnConfirmDeleteAccount").onclick =
+  wipeAllDataAndRestart;
 
-window.addEventListener("DOMContentLoaded", init);
+window.addEventListener("DOMContentLoaded", bootstrap);
