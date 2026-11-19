@@ -3270,3 +3270,22 @@ select.select {
     width: 100%;
   }
 }
+
+/* =====================================================================
+   Mobile: evita o zoom automático ao focar campos
+   O Safari (iOS) e alguns navegadores Android dão zoom na página quando
+   o campo focado tem fonte < 16px. Em telas de toque, todos os campos
+   de texto usam 16px; o zoom manual (pinça) continua funcionando.
+   ===================================================================== */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+@media (pointer: coarse), (max-width: 768px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
