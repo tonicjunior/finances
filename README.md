@@ -28,7 +28,8 @@ O projeto foi desenvolvido utilizando apenas **HTML, CSS e JavaScript**, sem bac
 - 🔁 **Transações recorrentes**
 
   - Marcação de gastos fixos mensais
-  - Fixos aparecem como "previstos" nos meses seguintes e são lançados com um clique ("Lançar" / "Lançar todos")
+  - Fixos entram automaticamente nos meses seguintes, no mesmo dia, sem confirmação ("Automático" quando a data já chegou, "Previsto" quando é futura) — só previsão, nada é gravado
+  - Caixinhas (metas) com depósito automático mensal: o valor entra como despesa "para a caixinha" e o saldo previsto aparece ao filtrar meses futuros
   - Card "Próximos meses" com o saldo previsto de cada mês (estilo fatura)
 
 - 🔍 **Filtros avançados**
@@ -54,7 +55,7 @@ O projeto foi desenvolvido utilizando apenas **HTML, CSS e JavaScript**, sem bac
 
   - Exportar backup cifrado (JSON criptografado com o **PIN do arquivo**: o PIN em uso no dia da exportação; trocar o PIN depois não altera backups já gerados)
   - Importar backups cifrados ou backups antigos em JSON aberto
-  - `exemplo-apresentacao.json`: backup cifrado de demonstração (Antonio e Maria, PIN **1234**). Agosto/2026 tem despesas extras (saldo negativo) para demonstrar o filtro. Importe pelo menu ⋮ → Importar backup: a tela "Quem é quem?" mostra os integrantes do arquivo e permite associar, criar ou marcar "Não importar"
+  - `exemplo-apresentacao.json`: backup cifrado de demonstração (Antonio e Maria, PIN **1234**). Agosto/2026 tem despesas extras (saldo negativo) para demonstrar o filtro. As caixinhas "Reserva de emergência" (dia 6) e "Viagem de férias" (dia 7) têm depósito automático a partir de dezembro/2026: filtre meses futuros para ver os fixos e os depósitos previstos. Importe pelo menu ⋮ → Importar backup: a tela "Quem é quem?" mostra os integrantes do arquivo e permite associar, criar ou marcar "Não importar"
 
 - 💾 **Persistência local criptografada**
   - Dados salvos automaticamente no `localStorage`, criptografados com o PIN do usuário

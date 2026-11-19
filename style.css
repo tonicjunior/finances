@@ -3289,3 +3289,85 @@ html {
     font-size: 16px !important;
   }
 }
+
+/* =====================================================================
+   Seletor de categorias: painel solto no <body>
+   Antes ficava dentro do modal (com rolagem) e aparecia cortado,
+   esticando a janela. Agora flutua sobre tudo, colado ao botão.
+   ===================================================================== */
+.category-picker-panel {
+  position: fixed;
+  top: auto;
+  right: auto;
+  z-index: 1000;
+  overscroll-behavior: contain;
+}
+
+.category-picker-panel.open {
+  display: block;
+}
+
+/* =====================================================================
+   Previsão automática (fixos e depósitos das caixinhas)
+   ===================================================================== */
+.forecast-badge.auto {
+  background: var(--info-light);
+  color: var(--info);
+}
+
+.t-meta .forecast-badge {
+  margin-left: 0.15rem;
+}
+
+.goal-tx-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--primary-light);
+  color: var(--primary);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.goal-tx-badge.withdraw {
+  background: var(--success-light);
+  color: var(--success);
+}
+
+.goal-amount-row.forecast strong {
+  color: var(--info);
+}
+
+.goal-auto-chip {
+  margin-top: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--info);
+  background: var(--info-light);
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+}
+
+.goal-auto-hint {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-left: 0.25rem;
+}
+
+#goalDetailForecast {
+  color: var(--info);
+}
+
+.t-meta {
+  flex-wrap: wrap; /* selos (Automático, Caixinha) quebram linha no celular */
+  row-gap: 4px;
+}

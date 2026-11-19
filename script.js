@@ -838,6 +838,7 @@ function loadGoals() {
 }
 
 function saveGoals(broadcast = true) {
+  invalidateDataCache(); // depósitos automáticos entram nos totais do mês
   secureStorage.setItem(GOALS_KEY, JSON.stringify(state.goals));
   if (broadcast && conn && conn.open) {
     sendData({ type: "goals_sync", data: state.goals });
@@ -859,9 +860,8 @@ function mergeGoals(incomingList, { silent = false } = {}) {
 
   if (changed) {
     saveGoals(false);
-    renderGoals();
+    requestRender(); // atualiza também os totais (depósitos automáticos)
     if (goalDetailId) renderGoalDetail();
-    renderAchievements();
     if (!silent) showToast("Metas sincronizadas", "success");
   }
 }
@@ -891,9 +891,11 @@ function renderGoals() {
   const container = document.getElementById("goalsSection");
   if (!container) return;
 
+  const forecast = getGoalForecastTarget();
   const cards = state.goals
     .map((g) => {
-      const saved = getGoalSaved(g);
+      const saved = getGoalBalance(g);
+      const projected = forecast ? getGoalBalance(g, forecast.date) : null;
       const pct =
         g.target > 0 ? Math.min(Math.round((saved / g.target) * 100), 100) : 0;
       const completed = g.target > 0 && saved >= g.target;
@@ -932,7 +934,22 @@ function renderGoals() {
               <span>Meta</span>
               <strong>${formatCurrency(g.target)}</strong>
             </div>
+            ${
+              forecast && projected !== saved
+                ? `<div class="goal-amount-row forecast">
+              <span>Em ${escapeHtml(forecast.short)}</span>
+              <strong>${formatCurrency(projected)}</strong>
+            </div>`
+                : ""
+            }
           </div>
+          ${
+            hasAutoDeposit(g)
+              ? `<div class="goal-auto-chip"><i class="bi bi-arrow-repeat"></i> Automático dia ${
+                  getCurrentAutoDeposit(g).day
+                }</div>`
+              : ""
+          }
           ${
             completed
               ? '<div class="goal-completed-badge"><i class="bi bi-check-circle-fill"></i> Concluída!</div>'
@@ -952,6 +969,19 @@ function renderGoals() {
   renderGoalsSummary();
 }
 
+// Quando o filtro aponta para um mês futuro, as caixinhas mostram quanto
+// teriam no fim daquele mês (com os depósitos automáticos previstos).
+function getGoalForecastTarget() {
+  const { year, month } = state.filters;
+  const date = dateInMonth(year, month, 31);
+  if (date <= todayStr()) return null;
+  return {
+    date,
+    short: `${MONTHS[month].slice(0, 3)}/${String(year).slice(2)}`,
+    long: `${MONTHS[month]} de ${year}`,
+  };
+}
+
 function renderGoalsSummary() {
   const countEl = document.getElementById("goalsActiveCount");
   if (!countEl) return;
@@ -961,7 +991,7 @@ function renderGoalsSummary() {
   let completed = 0;
 
   state.goals.forEach((g) => {
-    const saved = Math.max(getGoalSaved(g), 0);
+    const saved = Math.max(getGoalBalance(g), 0);
     savedTotal += saved;
     if (g.target > 0 && saved >= g.target) {
       completed++;
@@ -1010,6 +1040,9 @@ function openGoalEditModal(id = null) {
   document.getElementById("goalName").classList.remove("error");
   document.getElementById("goalTarget").value = goal?.target || "";
   document.getElementById("goalMonthly").value = goal?.monthlyContribution || "";
+  document.getElementById("goalAutoDay").value =
+    (goal && getCurrentAutoDeposit(goal)?.day) || "";
+  document.getElementById("goalAutoDay").classList.remove("error");
   document.getElementById("goalColor").value = goal?.color || "#6366f1";
   document.getElementById("goalPerson").value =
     goal && PERSONS[goal.person] ? goal.person : "eu";
@@ -1019,7 +1052,7 @@ function openGoalEditModal(id = null) {
 
   document.getElementById("goalInitialValueRow").style.display = goal
     ? "none"
-    : "block";
+    : "";
   document.getElementById("goalInitialValue").value = "";
 
   document.getElementById("btnDeleteGoal").style.display = goal
@@ -1052,6 +1085,27 @@ function saveGoalEdit() {
   }
   nameEl.classList.remove("error");
 
+  const autoDayEl = document.getElementById("goalAutoDay");
+  const autoDayRaw = autoDayEl.value.trim();
+  const autoDay = autoDayRaw ? Number(autoDayRaw) : 0;
+  if (autoDayRaw && (!Number.isInteger(autoDay) || autoDay < 1 || autoDay > 31)) {
+    autoDayEl.classList.add("error");
+    showToast("O dia do depósito automático deve ser de 1 a 31", "error");
+    return;
+  }
+  if (autoDay && !(monthlyContribution > 0)) {
+    document.getElementById("goalMonthly").classList.add("error");
+    showToast("Informe a contribuição mensal para o depósito automático", "error");
+    return;
+  }
+  autoDayEl.classList.remove("error");
+  document.getElementById("goalMonthly").classList.remove("error");
+
+  // Ligar/mudar/desligar vale do próximo agendamento em diante:
+  // meses anteriores nunca são recalculados.
+  const applyAutoDeposit = (goal) =>
+    updateAutoDepositPlan(goal, autoDay, monthlyContribution);
+
   if (editingGoalId) {
     const goal = state.goals.find((g) => g.id === editingGoalId);
     goal.name = name;
@@ -1060,6 +1114,7 @@ function saveGoalEdit() {
     goal.target = target;
     goal.monthlyContribution = monthlyContribution;
     goal.person = person;
+    applyAutoDeposit(goal);
   } else {
     const goal = {
       id: generateId(),
@@ -1071,6 +1126,7 @@ function saveGoalEdit() {
       person,
       history: [],
     };
+    applyAutoDeposit(goal);
     state.goals.push(goal);
 
     const initialValue =
@@ -1103,8 +1159,7 @@ function deleteGoalById(id) {
   state.goals = state.goals.filter((g) => g.id !== id);
   saveGoals(false);
   sendData({ type: "goal_delete", data: { id } });
-  renderGoals();
-  renderAchievements();
+  render();
   if (goalDetailId === id) closeGoalDetailModal();
   showToast("Meta removida");
 }
@@ -1141,12 +1196,28 @@ function renderGoalDetail() {
   const goal = state.goals.find((g) => g.id === goalDetailId);
   if (!goal) return;
 
-  const saved = getGoalSaved(goal);
+  const saved = getGoalBalance(goal);
   const pct =
     goal.target > 0 ? Math.min(Math.round((saved / goal.target) * 100), 100) : 0;
   const completed = goal.target > 0 && saved >= goal.target;
   const color = completed ? cssVar("--success") : goal.color || "#6366f1";
   const circumference = 2 * Math.PI * 42;
+
+  const forecast = getGoalForecastTarget();
+  const projected = forecast ? getGoalBalance(goal, forecast.date) : null;
+  const forecastRow = document.getElementById("goalDetailForecastRow");
+  if (forecast && projected !== saved) {
+    forecastRow.style.display = "";
+    document.getElementById("goalDetailForecastLabel").textContent = `Previsto em ${forecast.long}`;
+    document.getElementById("goalDetailForecast").textContent = formatCurrency(projected);
+  } else {
+    forecastRow.style.display = "none";
+  }
+
+  const auto = getCurrentAutoDeposit(goal);
+  document.getElementById("goalAutoHint").textContent = auto
+    ? `· automática todo dia ${auto.day}`
+    : "";
   const dash = (pct / 100) * circumference;
 
   const iconEl = document.getElementById("goalDetailIcon");
@@ -3184,8 +3255,12 @@ function formatDate(dateString) {
   return `${day}/${month}/${year}`;
 }
 
+// Data local "AAAA-MM-DD" (toISOString usaria UTC: à noite no Brasil
+// já seria o dia seguinte).
 function formatDateForInput(date) {
-  return date.toISOString().split("T")[0];
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
 }
 
 function saveData(broadcast = true) {
@@ -3361,7 +3436,8 @@ function toggleThemeWithLoader() {
 
 function getFilteredTransactions() {
   const { month, year, category, person } = state.filters;
-  return getMonthBucket(year, month).list.filter(
+  // Inclui a previsão automática (fixos e depósitos das caixinhas).
+  return getMonthView(year, month).list.filter(
     (t) =>
       (category === "all" || t.category === category) &&
       (person === "all" || t.person === person)
@@ -3389,11 +3465,12 @@ function calculateSummary(filtered) {
 // Índice por mês ("AAAA-MM" -> lançamentos e totais), construído em UMA
 // passada e reaproveitado por filtros, timeline, previsão e conquistas.
 // É invalidado a cada render() e a cada saveData(): nunca fica desatualizado.
-const dataCache = { months: null, series: null };
+const dataCache = { months: null, series: null, views: null };
 
 function invalidateDataCache() {
   dataCache.months = null;
   dataCache.series = null;
+  dataCache.views = null;
 }
 
 function getMonthBuckets() {
@@ -3516,10 +3593,15 @@ function render() {
   renderView(activeView, filtered, summary);
 }
 
-// ── TRANSAÇÕES FIXAS: PROJEÇÃO DOS PRÓXIMOS MESES ──
-// Fixos NÃO são lançados sozinhos: a cada mês após o último lançamento de
-// uma série, aparece um item "previsto" que o usuário confirma com um clique.
-// Previstos não entram nos totais reais, apenas na visão "Próximos meses".
+// ── PREVISÃO AUTOMÁTICA: FIXOS E DEPÓSITOS AUTOMÁTICOS DAS CAIXINHAS ──
+// Nada aqui é gravado: os itens são calculados na hora a partir dos
+// cadastros e entram nos totais do mês como previsão, sem confirmação.
+// - Fixos: em cada mês após o último lançamento real da série, a mesma
+//   receita/despesa aparece no mesmo dia.
+// - Caixinhas com depósito automático: todo mês, no dia cadastrado, o valor
+//   mensal aparece como despesa da caixinha (até a meta ser atingida).
+// Itens com data até hoje aparecem como "Automático"; depois, "Previsto".
+// Os registros reais (passados ou presentes) nunca são alterados.
 function recurringSeriesKey(t) {
   return `${t.person}-${t.type}-${String(t.description).trim().toLowerCase()}`;
 }
@@ -3527,6 +3609,17 @@ function recurringSeriesKey(t) {
 function monthIndex(dateStr) {
   const [y, m] = dateStr.split("-").map(Number);
   return y * 12 + (m - 1);
+}
+
+function todayStr() {
+  return formatDateForInput(new Date());
+}
+
+// Data "AAAA-MM-DD" do dia informado no mês (dia 31 vira o último dia do mês).
+function dateInMonth(year, month, day) {
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const d = Math.min(Math.max(Number(day) || 1, 1), lastDay);
+  return `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 // Último lançamento de cada série; a série só segue ativa se esse último
@@ -3544,54 +3637,162 @@ function getActiveRecurringSeries() {
   return dataCache.series;
 }
 
-function getProjectedForMonth(year, month) {
+function getGoalPerson(goal) {
+  return goal.person && goal.person !== SHARED_PERSON_KEY ? goal.person : "eu";
+}
+
+// Plano do depósito automático: lista de vigências
+// [{ from: "AAAA-MM", day, amount }] — day 0 = desligado a partir de `from`.
+// Mudanças valem do próximo agendamento em diante, então o que já
+// aconteceu (meses passados) nunca é recalculado.
+function getAutoDepositPlan(goal) {
+  return Array.isArray(goal.autoDeposit)
+    ? goal.autoDeposit.filter(
+        (s) => s && typeof s.from === "string" && /^\d{4}-\d{2}$/.test(s.from)
+      )
+    : [];
+}
+
+function getCurrentAutoDeposit(goal) {
+  const plan = getAutoDepositPlan(goal);
+  const last = plan[plan.length - 1];
+  return last && last.day >= 1 && last.amount > 0 ? last : null;
+}
+
+function hasAutoDeposit(goal) {
+  return !!getCurrentAutoDeposit(goal);
+}
+
+function updateAutoDepositPlan(goal, day, amount) {
+  const plan = getAutoDepositPlan(goal);
+  const current = getCurrentAutoDeposit(goal);
+  const newDay = day >= 1 && amount > 0 ? day : 0;
+  const newAmount = newDay ? amount : 0;
+  if (!current && !newDay) return;
+  if (current && current.day === newDay && current.amount === newAmount) return;
+
+  const now = new Date();
+  const thisMonth = formatDateForInput(now).slice(0, 7);
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const nextMonth = formatDateForInput(next).slice(0, 7);
+  const today = formatDateForInput(now);
+  // O depósito deste mês (pela configuração que vale neste mês) já
+  // aconteceu, ou o novo dia já passou? Então a mudança vale do próximo mês.
+  const thisSeg = plan.filter((s) => s.from <= thisMonth).pop();
+  const oldDone =
+    thisSeg &&
+    thisSeg.day >= 1 &&
+    thisSeg.amount > 0 &&
+    dateInMonth(now.getFullYear(), now.getMonth(), thisSeg.day) <= today;
+  const newPassed =
+    newDay && dateInMonth(now.getFullYear(), now.getMonth(), newDay) < today;
+  const from = oldDone || newPassed ? nextMonth : thisMonth;
+
+  goal.autoDeposit = [
+    ...plan.filter((s) => s.from < from),
+    { from, day: newDay, amount: newAmount },
+  ];
+}
+
+// Depósitos automáticos previstos de uma caixinha até o mês `untilIdx`.
+// Meses com contribuição mensal registrada de verdade não geram previsão
+// (não duplica), e a previsão para quando a meta é alcançada.
+function getGoalAutoDeposits(goal, untilIdx) {
+  const plan = getAutoDepositPlan(goal);
+  if (!plan.length) return [];
+  const segments = plan.map((s) => ({ ...s, idx: monthIndex(`${s.from}-01`) }));
+  const manualMonths = new Set(
+    (goal.history || [])
+      .filter((h) => h.isMonthly && typeof h.date === "string")
+      .map((h) => monthIndex(h.date))
+  );
+  let saved = getGoalSaved(goal);
+  const out = [];
+  let seg = -1;
+  for (let idx = segments[0].idx; idx <= untilIdx; idx++) {
+    while (seg + 1 < segments.length && segments[seg + 1].idx <= idx) seg++;
+    const s = segments[seg];
+    if (!s || !(s.day >= 1) || !(s.amount > 0)) continue;
+    if (manualMonths.has(idx)) continue;
+    if (goal.target > 0 && saved >= goal.target) break;
+    const y = Math.floor(idx / 12);
+    const m = idx % 12;
+    out.push({ idx, date: dateInMonth(y, m, s.day), amount: s.amount });
+    saved += s.amount;
+  }
+  return out;
+}
+
+// Saldo da caixinha em uma data: depósitos reais + automáticos até a data.
+function getGoalBalance(goal, untilDate = todayStr()) {
+  const auto = getGoalAutoDeposits(goal, monthIndex(untilDate))
+    .filter((d) => d.date <= untilDate)
+    .reduce((s, d) => s + d.amount, 0);
+  return getGoalSaved(goal) + auto;
+}
+
+function getVirtualForMonth(year, month) {
   const target = year * 12 + month;
-  const lastDay = new Date(year, month + 1, 0).getDate();
   const ym = `${year}${String(month + 1).padStart(2, "0")}`;
-  return getActiveRecurringSeries()
+  const today = todayStr();
+
+  const recurring = getActiveRecurringSeries()
     .filter((t) => target > monthIndex(t.date))
     .map((t) => {
-      const day = Math.min(Number(t.date.slice(8, 10)) || 1, lastDay);
       const root = t.recurringRoot || t.id;
       return {
         ...t,
-        // ID determinístico: se os dois aparelhos confirmarem o mesmo
-        // previsto, a sincronização não duplica o lançamento.
+        // ID determinístico: ao ajustar o mês, o lançamento real criado
+        // tem o mesmo ID nos dois aparelhos (a sincronização não duplica).
         id: `rec_${root}_${ym}`,
         recurringRoot: root,
-        date: `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+        date: dateInMonth(year, month, Number(t.date.slice(8, 10))),
         isProjected: true,
       };
     });
-}
 
-function getFilteredProjected() {
-  return getProjectedForMonth(state.filters.year, state.filters.month).filter(
-    (t) =>
-      (state.filters.category === "all" || t.category === state.filters.category) &&
-      (state.filters.person === "all" || t.person === state.filters.person)
-  );
-}
-
-function confirmProjected(ids) {
-  const wanted = new Set(Array.isArray(ids) ? ids : [ids]);
-  const items = getFilteredProjected().filter((t) => wanted.has(t.id));
-  if (!items.length) return;
-  items.forEach((p) => {
-    const { isProjected, ...transaction } = p;
-    if (state.transactions.some((t) => t.id === transaction.id)) return;
-    state.transactions.push(transaction);
-    sendData({ type: "transaction_update", data: transaction });
+  const goalDeposits = [];
+  (state.goals || []).forEach((g) => {
+    const dep = getGoalAutoDeposits(g, target).find((d) => d.idx === target);
+    if (!dep) return;
+    goalDeposits.push({
+      id: `auto_${g.id}_${ym}`,
+      description: `Meta: ${g.name} - Depósito automático`,
+      amount: dep.amount,
+      date: dep.date,
+      category: GOAL_CATEGORY,
+      person: getGoalPerson(g),
+      type: "expense",
+      isRecurring: false,
+      goalId: g.id,
+      isProjected: true,
+      isGoalAuto: true,
+    });
   });
-  saveData();
-  render();
-  showToast(
-    items.length > 1 ? `${items.length} lançamentos confirmados` : "Lançamento confirmado"
-  );
+
+  return [...recurring, ...goalDeposits].map((t) => ({
+    ...t,
+    isDue: t.date <= today,
+  }));
 }
 
-function confirmAllProjected() {
-  confirmProjected(getFilteredProjected().map((t) => t.id));
+// Mês completo: lançamentos reais + previsão automática (com totais).
+function getMonthView(year, month) {
+  const key = `${year}-${month}`;
+  if (!dataCache.views) dataCache.views = new Map();
+  const cached = dataCache.views.get(key);
+  if (cached) return cached;
+  const real = getMonthBucket(year, month);
+  const virtual = getVirtualForMonth(year, month);
+  let income = real.income;
+  let expense = real.expense;
+  virtual.forEach((t) => {
+    if (t.type === "income") income += t.amount;
+    else if (t.type === "expense") expense += t.amount;
+  });
+  const view = { list: [...real.list, ...virtual], income, expense };
+  dataCache.views.set(key, view);
+  return view;
 }
 
 // Visão estilo "fatura": mês atual + próximos meses com o saldo previsto.
@@ -3607,11 +3808,10 @@ function buildForecast() {
     const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
     const y = d.getFullYear();
     const m = d.getMonth();
-    const real = getMonthBucket(y, m).list.filter(personOk);
-    const projected = getProjectedForMonth(y, m).filter(personOk);
-    const items = [...real, ...projected].sort((a, b) =>
-      a.date.localeCompare(b.date)
-    );
+    const items = getMonthView(y, m)
+      .list.filter(personOk)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const projected = items.filter((t) => t.isProjected);
     const sum = (type) =>
       items.filter((t) => t.type === type).reduce((s, t) => s + t.amount, 0);
     const income = sum("income");
@@ -3628,6 +3828,30 @@ function buildForecast() {
     });
   }
   return months;
+}
+
+// Selo de situação: Automático (previsão cuja data já chegou), Previsto
+// (data futura), Fixo ou Lançado (registros reais).
+function txStatusBadge(t) {
+  if (t.isProjected) {
+    return t.isDue
+      ? '<span class="forecast-badge auto" title="Calculado automaticamente (não gravado)">Automático</span>'
+      : '<span class="forecast-badge projected" title="Previsão (não gravada)">Previsto</span>';
+  }
+  return t.isRecurring
+    ? '<span class="forecast-badge fixed">Fixo</span>'
+    : '<span class="forecast-badge scheduled">Lançado</span>';
+}
+
+// Selo "Caixinha": mostra que a despesa foi para uma meta/caixinha.
+function goalBadge(t) {
+  if (!t.goalId) return "";
+  const goal = (state.goals || []).find((g) => g.id === t.goalId);
+  const isWithdraw = t.type === "income";
+  return `<span class="goal-tx-badge ${isWithdraw ? "withdraw" : ""}">
+    <i class="bi bi-piggy-bank"></i>${isWithdraw ? "Resgate da caixinha" : "Para a caixinha"}${
+      goal ? ` ${escapeHtml(goal.name)}` : ""
+    }</span>`;
 }
 
 function renderForecast() {
@@ -3653,11 +3877,7 @@ function renderForecast() {
     ? sel.items
         .map((t) => {
           const cat = CATEGORIES[t.category] || { label: t.category, icon: "bi-tag" };
-          const badge = t.isProjected
-            ? '<span class="forecast-badge projected">Previsto</span>'
-            : t.isRecurring
-            ? '<span class="forecast-badge fixed">Fixo</span>'
-            : '<span class="forecast-badge scheduled">Lançado</span>';
+          const badge = txStatusBadge(t);
           return `
           <div class="forecast-row ${t.isProjected ? "is-projected" : ""}">
             <span class="forecast-row-day">${t.date.slice(8, 10)}</span>
@@ -3683,69 +3903,19 @@ function renderForecast() {
 
 function renderTransactions(list) {
   const container = document.getElementById("transactionsList");
-  const projected = getFilteredProjected();
-  const projectedHtml = projected.length
-    ? `
-    <div class="projected-group">
-      <div class="projected-group-header">
-        <span><i class="bi bi-calendar-event"></i> Fixos previstos para este mês (${projected.length})</span>
-        <button type="button" class="btn btn-sm btn-outline" onclick="confirmAllProjected()">
-          Lançar todos
-        </button>
-      </div>
-      ${projected
-        .map((t) => {
-          const cat = CATEGORIES[t.category] || { label: t.category, icon: "bi-tag" };
-          const typeClass = t.type === "income" ? "income" : "expense";
-          return `
-          <div class="transaction-item is-projected">
-            <div class="transaction-left">
-              <div class="t-icon-box ${typeClass}"><i class="bi ${escapeHtml(cat.icon)}"></i></div>
-              <div class="t-details">
-                <h4>${escapeHtml(t.description)}</h4>
-                <div class="t-meta">
-                  <span>${escapeHtml(cat.label)}</span>
-                  <span class="t-dot"></span>
-                  <span>${escapeHtml(getPersonLabel(t.person))}</span>
-                  <span class="t-dot"></span>
-                  <span>${escapeHtml(formatDate(t.date))}</span>
-                </div>
-              </div>
-            </div>
-            <div class="transaction-right">
-              <span class="t-amount ${typeClass}">
-                ${t.type === "income" ? "+" : "-"} ${formatCurrency(t.amount)}
-              </span>
-              <button type="button" class="btn btn-sm btn-primary" onclick="confirmProjected('${safeJsArg(t.id)}')">
-                Lançar
-              </button>
-            </div>
-          </div>`;
-        })
-        .join("")}
-    </div>`
-    : "";
 
   if (list.length === 0) {
-    if (projectedHtml) {
-      container.innerHTML = projectedHtml;
-      return;
-    }
     container.innerHTML = `<div style="text-align:center; padding: 2rem; color: var(--text-secondary);">
       <i class="bi bi-inbox" style="font-size: 2rem;"></i><br>Nenhum registro.
     </div>`;
     return;
   }
   const sorted = [...list].sort((a, b) => {
-    const dateA = new Date(a.date);
-    const dateB = new Date(b.date);
-    if (dateB - dateA !== 0) {
-      return dateB - dateA;
-    }
-    return b.id.localeCompare(a.id);
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    return String(b.id).localeCompare(String(a.id));
   });
 
-  container.innerHTML = projectedHtml + sorted
+  container.innerHTML = sorted
     .map((t) => {
       const catData = CATEGORIES[t.category] || {
         label: t.category,
@@ -3753,12 +3923,25 @@ function renderTransactions(list) {
       };
       const personLabel = getPersonLabel(t.person);
       const typeClass = t.type === "income" ? "income" : "expense";
+      const id = safeJsArg(t.id);
+
+      // Previsões automáticas não são registros: não podem ser apagadas.
+      // Fixos podem ser ajustados no mês (vira um registro real a partir
+      // dali); depósitos automáticos abrem a caixinha.
+      const actions = t.isGoalAuto
+        ? `<button class="btn-icon-sm" title="Abrir caixinha" onclick="openGoalDetail('${safeJsArg(
+            t.goalId
+          )}')"><i class="bi bi-piggy-bank"></i></button>`
+        : t.isProjected
+        ? `<button class="btn-icon-sm" title="Ajustar este mês" onclick="editTransaction('${id}')"><i class="bi bi-pencil"></i></button>`
+        : `<button class="btn-icon-sm" onclick="editTransaction('${id}')"><i class="bi bi-pencil"></i></button>
+            <button class="btn-icon-sm delete" onclick="confirmDelete('${id}')"><i class="bi bi-trash"></i></button>`;
 
       return `
-      <div class="transaction-item">
+      <div class="transaction-item ${t.isProjected ? "is-projected" : ""}">
         <div class="transaction-left">
           <div class="t-icon-box ${typeClass}">
-            <i class="bi ${escapeHtml(catData.icon)}"></i>
+            <i class="bi ${escapeHtml(t.goalId ? "bi-piggy-bank" : catData.icon)}"></i>
           </div>
           <div class="t-details">
             <h4>${escapeHtml(t.description)}</h4>
@@ -3776,6 +3959,8 @@ function renderTransactions(list) {
                   ? '<i class="bi bi-arrow-repeat" title="Recorrente"></i>'
                   : ""
               }
+              ${t.isProjected ? txStatusBadge(t) : ""}
+              ${goalBadge(t)}
             </div>
           </div>
         </div>
@@ -3784,12 +3969,7 @@ function renderTransactions(list) {
             ${t.type === "income" ? "+" : "-"} ${formatCurrency(t.amount)}
           </span>
           <div class="t-actions">
-            <button class="btn-icon-sm" onclick="editTransaction('${safeJsArg(
-              t.id
-            )}')"><i class="bi bi-pencil"></i></button>
-            <button class="btn-icon-sm delete" onclick="confirmDelete('${safeJsArg(
-              t.id
-            )}')"><i class="bi bi-trash"></i></button>
+            ${actions}
           </div>
         </div>
       </div>
@@ -4271,7 +4451,7 @@ function renderTimeline() {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const m = d.getMonth(),
       y = d.getFullYear();
-    const { income: inc, expense: exp } = getMonthBucket(y, m);
+    const { income: inc, expense: exp } = getMonthView(y, m);
     const label =
       y === state.filters.year
         ? MONTHS[m].slice(0, 3)
@@ -4345,6 +4525,7 @@ function renderTimeline() {
 
 function openModal(transaction = null) {
   state.editingId = transaction ? transaction.id : null;
+  state.editingBase = transaction ? { ...transaction } : null;
   const modal = document.getElementById("transactionModal");
   document.getElementById("modalTitle").textContent = transaction
     ? "Editar Transação"
@@ -4384,11 +4565,26 @@ function openModal(transaction = null) {
 
 function editTransaction(id) {
   const transaction = state.transactions.find((t) => t.id === id);
-  if (transaction) openModal(transaction);
-  else showToast("Erro ao encontrar transação.", "error");
+  if (transaction) {
+    openModal(transaction);
+    return;
+  }
+  // Fixo previsto: ajustar cria o registro real deste mês; a recorrência
+  // segue a partir dele (ex.: aumento de salário vale daqui em diante).
+  const projected = getFilteredTransactions().find(
+    (t) => t.id === id && t.isProjected && !t.isGoalAuto
+  );
+  if (projected) {
+    const { isProjected, isDue, ...base } = projected;
+    openModal(base);
+    document.getElementById("modalTitle").textContent = "Ajustar lançamento do mês";
+    return;
+  }
+  showToast("Erro ao encontrar transação.", "error");
 }
 
 function closeModal() {
+  setCategoryPickerOpen(false);
   document.getElementById("transactionModal").classList.remove("active");
   document
     .querySelectorAll(".form-control.error")
@@ -4428,6 +4624,8 @@ function saveTransaction() {
   }
 
   const transaction = {
+    // Mantém campos extras do original (ex.: vínculo com a caixinha).
+    ...(state.editingId ? state.editingBase || {} : {}),
     id: state.editingId || generateId(),
     description: descEl.value.trim(),
     amount: parseFloat(amountEl.value),
@@ -4441,6 +4639,7 @@ function saveTransaction() {
   if (state.editingId) {
     const idx = state.transactions.findIndex((t) => t.id === state.editingId);
     if (idx !== -1) state.transactions[idx] = transaction;
+    else state.transactions.push(transaction); // ajuste de um fixo previsto
     showToast("Atualizado com sucesso!");
   } else {
     state.transactions.push(transaction);
@@ -4516,9 +4715,87 @@ function renderCategoryPickerTx() {
   panel.querySelectorAll(".category-picker-item").forEach((btn) => {
     btn.onclick = () => {
       selectCategoryTx(btn.getAttribute("data-key"));
-      document.getElementById("categoryPickerTx").classList.remove("open");
+      setCategoryPickerOpen(false);
     };
   });
+}
+
+// O painel de categorias fica no <body> (fora do modal): dentro do modal
+// ele era cortado pela rolagem e esticava a janela. Abre colado ao botão,
+// para baixo ou para cima conforme o espaço disponível na tela.
+function positionCategoryPanel() {
+  const trigger = document.getElementById("categoryPickerTrigger");
+  const panel = document.getElementById("categoryPickerPanel");
+  if (!trigger || !panel) return;
+  const r = trigger.getBoundingClientRect();
+  const vw = document.documentElement.clientWidth;
+  const vh = window.innerHeight;
+  const margin = 8;
+  const width = Math.min(Math.max(r.width, 240), vw - margin * 2);
+  const left = Math.min(Math.max(r.left, margin), vw - width - margin);
+  const spaceBelow = vh - r.bottom - margin;
+  const spaceAbove = r.top - margin;
+  const openUp = spaceBelow < 200 && spaceAbove > spaceBelow;
+  const maxHeight = Math.max(Math.min(280, (openUp ? spaceAbove : spaceBelow) - 4), 120);
+
+  panel.style.width = `${width}px`;
+  panel.style.left = `${left}px`;
+  panel.style.maxHeight = `${maxHeight}px`;
+  if (openUp) {
+    panel.style.top = "auto";
+    panel.style.bottom = `${vh - r.top + 4}px`;
+  } else {
+    panel.style.bottom = "auto";
+    panel.style.top = `${r.bottom + 4}px`;
+  }
+}
+
+function setCategoryPickerOpen(open) {
+  const picker = document.getElementById("categoryPickerTx");
+  const panel = document.getElementById("categoryPickerPanel");
+  if (!picker || !panel) return;
+  picker.classList.toggle("open", open);
+  panel.classList.toggle("open", open);
+  document.getElementById("categoryPickerTrigger")?.setAttribute("aria-expanded", String(open));
+  if (open) {
+    positionCategoryPanel();
+    panel.querySelector(".category-picker-item.active")?.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function setupCategoryPicker() {
+  const picker = document.getElementById("categoryPickerTx");
+  const panel = document.getElementById("categoryPickerPanel");
+  const trigger = document.getElementById("categoryPickerTrigger");
+  if (!picker || !panel || !trigger) return;
+  document.body.appendChild(panel);
+
+  trigger.onclick = (e) => {
+    e.stopPropagation();
+    setCategoryPickerOpen(!picker.classList.contains("open"));
+  };
+  document.addEventListener("click", (e) => {
+    if (!picker.contains(e.target) && !panel.contains(e.target)) {
+      setCategoryPickerOpen(false);
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && picker.classList.contains("open")) {
+      setCategoryPickerOpen(false);
+      trigger.focus();
+    }
+  });
+  // Rolar o modal ou redimensionar a tela fecha o painel (não fica solto).
+  document.addEventListener(
+    "scroll",
+    (e) => {
+      if (picker.classList.contains("open") && !panel.contains(e.target)) {
+        setCategoryPickerOpen(false);
+      }
+    },
+    true
+  );
+  window.addEventListener("resize", () => setCategoryPickerOpen(false));
 }
 
 function selectCategoryTx(key) {
@@ -4802,14 +5079,7 @@ function init() {
   renderCategoriesSection();
   setupCollapsibleSections();
 
-  document.getElementById("categoryPickerTrigger").onclick = (e) => {
-    e.stopPropagation();
-    document.getElementById("categoryPickerTx").classList.toggle("open");
-  };
-  document.addEventListener("click", (e) => {
-    const picker = document.getElementById("categoryPickerTx");
-    if (picker && !picker.contains(e.target)) picker.classList.remove("open");
-  });
+  setupCategoryPicker();
 
   let resizeTimer = null;
   window.addEventListener("resize", () => {

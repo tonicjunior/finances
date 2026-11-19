@@ -467,9 +467,10 @@
                 </div>
                 <div class="chart-content">
                   <p class="forecast-hint">
-                    Lançamentos já registrados com data futura + transações fixas
-                    previstas. Itens "Previstos" só entram nos totais reais depois
-                    que você clicar em <strong>Lançar</strong> na lista de transações.
+                    Lançamentos registrados + transações fixas e depósitos
+                    automáticos das caixinhas, calculados sozinhos no dia de cada
+                    mês. São só previsão: entram nos totais sem confirmação e
+                    nunca alteram seus registros.
                   </p>
                   <div class="forecast-chips" id="forecastChips" role="tablist"></div>
                   <div id="forecastDetail"></div>
@@ -1110,10 +1111,27 @@
           </div>
           <div class="row g-3 mb-3">
             <div class="col-6">
+              <label for="goalAutoDay" class="form-label"
+                >Depósito automático (dia)</label
+              >
+              <input
+                type="number"
+                class="form-control"
+                id="goalAutoDay"
+                placeholder="Ex.: 5 (vazio = manual)"
+                step="1"
+                min="1"
+                max="31"
+                inputmode="numeric"
+              />
+            </div>
+            <div class="col-6">
               <label for="goalPerson" class="form-label">Responsável</label>
               <select class="form-select" id="goalPerson"></select>
             </div>
-            <div class="col-6" id="goalInitialValueRow">
+          </div>
+          <div class="row g-3 mb-3" id="goalInitialValueRow">
+            <div class="col-6">
               <label for="goalInitialValue" class="form-label"
                 >Valor já guardado</label
               >
@@ -1128,8 +1146,11 @@
             </div>
           </div>
           <p class="goal-edit-hint">
-            <i class="bi bi-info-circle"></i> Os depósitos nesta meta viram
+            <i class="bi bi-info-circle"></i> Os depósitos nesta caixinha viram
             despesas na categoria Investimentos, e as retiradas viram receitas.
+            Com o depósito automático, todo mês, no dia escolhido, a
+            contribuição mensal entra nas despesas e no saldo da caixinha como
+            previsão (nada é gravado nos seus registros).
           </p>
         </div>
         <div class="modal-footer">
@@ -1195,6 +1216,10 @@
                 <span>Meta</span>
                 <strong id="goalDetailTarget">R$ 0,00</strong>
               </div>
+              <div id="goalDetailForecastRow" style="display: none">
+                <span id="goalDetailForecastLabel">Previsto</span>
+                <strong id="goalDetailForecast">R$ 0,00</strong>
+              </div>
             </div>
           </div>
 
@@ -1203,6 +1228,7 @@
               <i class="bi bi-calendar-check"></i>
               Contribuição mensal:
               <strong id="goalMonthlyAmount">R$ 0</strong>
+              <span class="goal-auto-hint" id="goalAutoHint"></span>
             </div>
             <button
               type="button"
